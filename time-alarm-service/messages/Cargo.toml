@@ -1,0 +1,31 @@
+[package]
+name = "time-alarm-service-messages"
+description = "Time and Alarm service message definitions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bitfield.workspace = true
+bytemuck.workspace = true
+defmt = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
+embassy-executor.workspace = true
+embassy-futures.workspace = true
+embassy-sync.workspace = true
+embassy-time.workspace = true
+embedded-mcu-hal.workspace = true
+num_enum.workspace = true
+
+# TODO do we need all these?
+[features]
+defmt = [
+    "dep:defmt",
+    "embassy-time/defmt",
+    "embassy-sync/defmt",
+    "embassy-executor/defmt",
+]
+
+[lints]
+workspace = true

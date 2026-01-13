@@ -30,6 +30,7 @@ embedded-usb-pd.workspace = true
 heapless.workspace = true
 log = { workspace = true, optional = true }
 num_enum.workspace = true
+time-alarm-service-messages.workspace = true
 uuid.workspace = true
 
 [dependencies.mctp-rs]
@@ -66,6 +67,7 @@ defmt = [
     "embedded-usb-pd/defmt",
     "embedded-cfu-protocol/defmt",
     "mctp-rs/defmt",
+    "time-alarm-service-messages/defmt",
 ]
 log = [
     "dep:log",
