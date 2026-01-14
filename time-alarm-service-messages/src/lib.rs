@@ -4,7 +4,9 @@ mod acpi_timestamp;
 pub use acpi_timestamp::{AcpiDaylightSavingsTimeStatus, AcpiTimeZone, AcpiTimestamp};
 use bitfield::bitfield;
 use core::array::TryFromSliceError;
+use embedded_services::relay::{MessageSerializationError, SerializableMessage};
 
+// TODO let's not have two separate error types...
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TimeAlarmCommandError {
@@ -25,7 +27,6 @@ impl From<TryFromSliceError> for TimeAlarmCommandError {
     }
 }
 
-// TODO investigate use of strum crate to codegen discriminant enum
 #[derive(num_enum::IntoPrimitive, num_enum::TryFromPrimitive, Copy, Clone, Debug, PartialEq)]
 #[repr(u16)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -145,27 +146,29 @@ impl Default for AlarmExpiredWakePolicy {
 // -------------------------------------------------
 
 // Timer ID as defined in the ACPI spec.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, num_enum::TryFromPrimitive, num_enum::IntoPrimitive)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u32)]
 pub enum AcpiTimerId {
-    AcPower,
-    DcPower,
+    AcPower = 0,
+    DcPower = 1,
 }
 
 impl AcpiTimerId {
+    // TODO rm
     // Given a byte slice, attempts to parse an AcpiTimerId from the first 4 bytes.
-    // Returns the parsed AcpiTimerId and a slice of the remaining bytes.
-    pub fn try_from_bytes(bytes: &'_ [u8]) -> Result<(Self, &'_ [u8]), TimeAlarmCommandError> {
-        const SIZE_BYTES: usize = core::mem::size_of::<u32>();
-        let id = u32::from_le_bytes(
-            bytes
-                .get(0..SIZE_BYTES)
-                .ok_or(TimeAlarmCommandError::InvalidArgument)?
-                .try_into()?,
-        );
+    // Returns the parsed AcpiTimerId and a slice of the remaining bytes.\
+    // pub fn try_from_bytes(bytes: &'_ [u8]) -> Result<(Self, &'_ [u8]), TimeAlarmCommandError> {
+    //     const SIZE_BYTES: usize = core::mem::size_of::<u32>();
+    //     let id = u32::from_le_bytes(
+    //         bytes
+    //             .get(0..SIZE_BYTES)
+    //             .ok_or(TimeAlarmCommandError::InvalidArgument)?
+    //             .try_into()?,
+    //     );
 
-        Ok((AcpiTimerId::try_from(id)?, &bytes[SIZE_BYTES..]))
-    }
+    //     Ok((AcpiTimerId::try_from(id)?, &bytes[SIZE_BYTES..]))
+    // }
 
     pub fn get_other_timer_id(&self) -> Self {
         match self {
@@ -175,17 +178,18 @@ impl AcpiTimerId {
     }
 }
 
-impl TryFrom<u32> for AcpiTimerId {
-    type Error = TimeAlarmCommandError;
+// TODO rm
+// impl TryFrom<u32> for AcpiTimerId {
+//     type Error = TimeAlarmCommandError;
 
-    fn try_from(value: u32) -> Result<Self, TimeAlarmCommandError> {
-        match value {
-            0 => Ok(AcpiTimerId::AcPower),
-            1 => Ok(AcpiTimerId::DcPower),
-            _ => Err(TimeAlarmCommandError::InvalidAcpiTimerId),
-        }
-    }
-}
+//     fn try_from(value: u32) -> Result<Self, TimeAlarmCommandError> {
+//         match value {
+//             0 => Ok(AcpiTimerId::AcPower),
+//             1 => Ok(AcpiTimerId::DcPower),
+//             _ => Err(TimeAlarmCommandError::InvalidAcpiTimerId),
+//         }
+//     }
+// }
 
 bitfield!(
     #[derive(Copy, Clone, Default, PartialEq, Eq)]
@@ -273,10 +277,53 @@ impl AcpiTimeAlarmResponse {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AcpiTimeAlarmError {
     GenericFailure,
 }
 
 pub type AcpiTimeAlarmResult = Result<AcpiTimeAlarmResponse, AcpiTimeAlarmError>;
+
+// TODO implement these, move to be with their types
+impl SerializableMessage for AcpiTimeAlarmRequest {
+    fn serialize(self, _buffer: &mut [u8]) -> Result<usize, MessageSerializationError> {
+        todo!()
+    }
+
+    fn discriminant(&self) -> u16 {
+        todo!()
+    }
+
+    fn deserialize(_discriminant: u16, _buffer: &[u8]) -> Result<Self, MessageSerializationError> {
+        todo!()
+    }
+}
+
+impl SerializableMessage for AcpiTimeAlarmResponse {
+    fn serialize(self, _buffer: &mut [u8]) -> Result<usize, MessageSerializationError> {
+        todo!()
+    }
+
+    fn discriminant(&self) -> u16 {
+        todo!()
+    }
+
+    fn deserialize(_discriminant: u16, _buffer: &[u8]) -> Result<Self, MessageSerializationError> {
+        todo!()
+    }
+}
+
+impl SerializableMessage for AcpiTimeAlarmError {
+    fn serialize(self, _buffer: &mut [u8]) -> Result<usize, MessageSerializationError> {
+        todo!()
+    }
+
+    fn discriminant(&self) -> u16 {
+        todo!()
+    }
+
+    fn deserialize(_discriminant: u16, _buffer: &[u8]) -> Result<Self, MessageSerializationError> {
+        todo!()
+    }
+}

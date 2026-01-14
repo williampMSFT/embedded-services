@@ -948,7 +948,6 @@ dependencies = [
  "rstest",
  "serde",
  "static_cell",
- "time-alarm-service-messages",
  "tokio",
  "uuid",
 ]
@@ -1027,6 +1026,7 @@ dependencies = [
  "mctp-rs",
  "num_enum",
  "thermal-service-messages",
+ "time-alarm-service-messages",
 ]
 
 [[package]]
@@ -2189,6 +2189,7 @@ dependencies = [
  "embassy-sync",
  "embassy-time",
  "embedded-mcu-hal",
+ "embedded-services",
  "log",
  "num_enum",
 ]
