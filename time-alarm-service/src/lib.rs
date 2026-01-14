@@ -1,4 +1,6 @@
 #![no_std]
+// TODO remove before checkin
+#![allow(unused_imports)]
 
 // TODO clean these up before checkin
 use core::cell::RefCell;
@@ -9,9 +11,6 @@ use embassy_sync::once_lock::OnceLock;
 use embassy_sync::signal::Signal;
 use embedded_mcu_hal::NvramStorage;
 use embedded_mcu_hal::time::{Datetime, DatetimeClock, DatetimeClockError};
-use embedded_services::ec_type::message::OdpCommand;
-use embedded_services::ec_type::message::{StdHostMsg, StdHostPayload, StdHostRequest};
-use embedded_services::ec_type::protocols::mctp::Odp::TimeAlarmCommand;
 use embedded_services::{GlobalRawMutex, comms::MailboxDelegateError};
 use embedded_services::{comms, error, info, warn};
 use time_alarm_service_messages::*;
@@ -148,7 +147,7 @@ pub struct Service {
     endpoint: comms::Endpoint,
 
     // ACPI messages from the host are sent through this channel.
-    acpi_channel: Channel<GlobalRawMutex, (comms::EndpointID, AcpiTimeAlarmDeviceCommand), 10>,
+    acpi_channel: Channel<GlobalRawMutex, (comms::EndpointID, AcpiTimeAlarmRequest), 10>,
 
     clock_state: Mutex<GlobalRawMutex, RefCell<ClockState>>,
 
@@ -209,7 +208,7 @@ impl Service {
             },
         });
 
-        // TODO [POWER_SOURCE] we need to subscribe to messages that tell us if we're on AC or DC power so we can decide which alarms to trigger - how do we do that?
+        // TODO [POWER_SOURCE] we need to subscribe to messages that tell us if we're on AC or DC power so we can decide which alarms to trigger, but those notifications are not yet implemented - revisit when they are.
         // TODO [POWER_SOURCE] if it's possible to learn which power source is active at init time, we should set that one active rather than defaulting to the AC timer.
         service.timers.ac_timer.start(&service.clock_state, true);
         service.timers.dc_timer.start(&service.clock_state, false);
@@ -230,40 +229,14 @@ impl Service {
 
             match select(acpi_command, power_source_change).await {
                 Either::First((respond_to_endpoint, acpi_command)) => {
-                    match self.handle_acpi_command(acpi_command).await {
-                        Ok(response) => {
-                            // TODO [COMMS] it seems like we're sort of conflating wire representation with message representation here -
-                            //      is this really how we want to pass messages through the comms system? It seems like it makes it
-                            //      harder for other services to send messages to us - we're obligated to serialize/deserialize messages
-                            //      whenever we send them to another subsystem on the MCU rather than just passing around strongly-typed
-                            //      objects.  We may want to consider changing the comms system to allow passing strongly-typed objects and
-                            //      perhaps a trait that indicates if it's serializable for an off-system transport like eSPI?
-                            //
-                            const STATUS_SUCCEEDED: u8 = 0;
-                            let request = StdHostRequest {
-                                command: OdpCommand::TimeAlarm((&acpi_command).into()), // TODO is this right?
-                                status: STATUS_SUCCEEDED,
-                                payload: StdHostPayload::TimeAlarmResponse(response), // TODO it's weird to me that we have a status and an 'error response' message type - is this the right shape for the comm system?
-                            };
-                            self.endpoint
-                                .send(respond_to_endpoint, &StdHostMsg::Response(request))
-                                .await
-                                .expect("send returns Infallible");
-                        }
-                        Err(e) => {
-                            error!("Error handling ACPI command: {:?}", e);
-                            const STATUS_FAILED: u8 = 1;
-                            let request = StdHostRequest {
-                                command: OdpCommand::TimeAlarm((&acpi_command).into()), // TODO is this right? It seems odd to me that we'd need the request type in the header - either we should enforce FIFO ordering for requests or we should have a unique request ID rather than just a "kind of request" tag
-                                status: STATUS_FAILED,
-                                payload: StdHostPayload::ErrorResponse {}, // TODO it's weird to me that we have a status and an 'error response' message type - is this the right shape for the comm system?
-                            };
-                            self.endpoint
-                                .send(respond_to_endpoint, &StdHostMsg::Response(request))
-                                .await
-                                .expect("send returns Infallible");
-                        }
-                    }
+                    let result: AcpiTimeAlarmResult = self
+                        .handle_acpi_command(acpi_command)
+                        .await
+                        .map_err(|_| time_alarm_service_messages::AcpiTimeAlarmError::GenericFailure);
+                    self.endpoint
+                        .send(respond_to_endpoint, &result)
+                        .await
+                        .expect("send returns Infallible");
                 }
                 Either::Second(new_power_source) => {
                     info!("Power source changed to {:?}", new_power_source);
@@ -300,48 +273,46 @@ impl Service {
 
     async fn handle_acpi_command(
         &'static self,
-        command: AcpiTimeAlarmDeviceCommand,
-    ) -> Result<AcpiTimeAlarmCommandResponse, TimeAlarmError> {
+        command: AcpiTimeAlarmRequest,
+    ) -> Result<AcpiTimeAlarmResponse, TimeAlarmError> {
         info!("Received Time-Alarm Device command: {:?}", command);
         match command {
-            AcpiTimeAlarmDeviceCommand::GetCapabilities => {
-                Ok(AcpiTimeAlarmCommandResponse::Capabilities(self.capabilities))
-            }
-            AcpiTimeAlarmDeviceCommand::GetRealTime => self.clock_state.lock(|clock_state| {
+            AcpiTimeAlarmRequest::GetCapabilities => Ok(AcpiTimeAlarmResponse::Capabilities(self.capabilities)),
+            AcpiTimeAlarmRequest::GetRealTime => self.clock_state.lock(|clock_state| {
                 let clock_state = clock_state.borrow();
                 let datetime = clock_state.datetime_clock.get_current_datetime()?;
                 let (time_zone, dst_status) = clock_state.tz_data.get_data();
-                Ok(AcpiTimeAlarmCommandResponse::RealTime(AcpiTimestamp {
+                Ok(AcpiTimeAlarmResponse::RealTime(AcpiTimestamp {
                     datetime,
                     time_zone,
                     dst_status,
                 }))
             }),
-            AcpiTimeAlarmDeviceCommand::SetRealTime(timestamp) => {
+            AcpiTimeAlarmRequest::SetRealTime(timestamp) => {
                 self.clock_state.lock(|clock_state| {
                     let mut clock_state = clock_state.borrow_mut();
                     clock_state.datetime_clock.set_current_datetime(&timestamp.datetime)?;
                     clock_state.tz_data.set_data(timestamp.time_zone, timestamp.dst_status);
 
                     // TODO [SPEC] the spec is ambiguous on whether or not we should adjust any outstanding timers based on the new time - see if we can find an answer elsewhere
-                    Ok(AcpiTimeAlarmCommandResponse::OkNoData)
+                    Ok(AcpiTimeAlarmResponse::OkNoData)
                 })
             }
-            AcpiTimeAlarmDeviceCommand::GetWakeStatus(timer_id) => {
+            AcpiTimeAlarmRequest::GetWakeStatus(timer_id) => {
                 let status = self.timers.get_timer(timer_id).get_wake_status();
-                Ok(AcpiTimeAlarmCommandResponse::TimerStatus(status))
+                Ok(AcpiTimeAlarmResponse::TimerStatus(status))
             }
-            AcpiTimeAlarmDeviceCommand::ClearWakeStatus(timer_id) => {
+            AcpiTimeAlarmRequest::ClearWakeStatus(timer_id) => {
                 self.timers.get_timer(timer_id).clear_wake_status();
-                Ok(AcpiTimeAlarmCommandResponse::OkNoData)
+                Ok(AcpiTimeAlarmResponse::OkNoData)
             }
-            AcpiTimeAlarmDeviceCommand::SetExpiredTimerPolicy(timer_id, timer_policy) => {
+            AcpiTimeAlarmRequest::SetExpiredTimerPolicy(timer_id, timer_policy) => {
                 self.timers
                     .get_timer(timer_id)
                     .set_timer_wake_policy(&self.clock_state, timer_policy);
-                Ok(AcpiTimeAlarmCommandResponse::OkNoData)
+                Ok(AcpiTimeAlarmResponse::OkNoData)
             }
-            AcpiTimeAlarmDeviceCommand::SetTimerValue(timer_id, timer_value) => {
+            AcpiTimeAlarmRequest::SetTimerValue(timer_id, timer_value) => {
                 let new_expiration_time = match timer_value {
                     AlarmTimerSeconds::DISABLED => None,
                     AlarmTimerSeconds(secs) => {
@@ -358,12 +329,12 @@ impl Service {
                 self.timers
                     .get_timer(timer_id)
                     .set_expiration_time(&self.clock_state, new_expiration_time);
-                Ok(AcpiTimeAlarmCommandResponse::OkNoData)
+                Ok(AcpiTimeAlarmResponse::OkNoData)
             }
-            AcpiTimeAlarmDeviceCommand::GetExpiredTimerPolicy(timer_id) => Ok(
-                AcpiTimeAlarmCommandResponse::WakePolicy(self.timers.get_timer(timer_id).get_timer_wake_policy()),
-            ),
-            AcpiTimeAlarmDeviceCommand::GetTimerValue(timer_id) => {
+            AcpiTimeAlarmRequest::GetExpiredTimerPolicy(timer_id) => Ok(AcpiTimeAlarmResponse::WakePolicy(
+                self.timers.get_timer(timer_id).get_timer_wake_policy(),
+            )),
+            AcpiTimeAlarmRequest::GetTimerValue(timer_id) => {
                 let expiration_time = self.timers.get_timer(timer_id).get_expiration_time();
 
                 let timer_wire_format = match expiration_time {
@@ -377,7 +348,7 @@ impl Service {
                     None => AlarmTimerSeconds::DISABLED,
                 };
 
-                Ok(AcpiTimeAlarmCommandResponse::TimerSeconds(timer_wire_format))
+                Ok(AcpiTimeAlarmResponse::TimerSeconds(timer_wire_format))
             }
         }
     }
@@ -387,11 +358,9 @@ impl comms::MailboxDelegate for Service {
     fn receive(&self, message: &comms::Message) -> Result<(), comms::MailboxDelegateError> {
         info!("Received message at time-alarm-service");
 
-        if let Some(acpi_cmd) = message.data.get::<StdHostRequest>()
-            && let TimeAlarmCommand(command) = acpi_cmd.payload
-        {
+        if let Some(acpi_cmd) = message.data.get::<time_alarm_service_messages::AcpiTimeAlarmRequest>() {
             self.acpi_channel
-                .try_send((message.from, command))
+                .try_send((message.from, *acpi_cmd))
                 .map_err(|_| MailboxDelegateError::BufferFull)?;
             Ok(())
         } else {
@@ -403,6 +372,7 @@ impl comms::MailboxDelegate for Service {
     }
 }
 
+// TODO move these to a setup macro that the application layer invokes
 #[embassy_executor::task]
 async fn command_handler_task(service: &'static Service) {
     info!("Starting time-alarm service task");

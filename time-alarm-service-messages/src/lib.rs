@@ -25,11 +25,11 @@ impl From<TryFromSliceError> for TimeAlarmCommandError {
     }
 }
 
-// TODO investigate use of strum crate to codegen discriminant enum and maybe num_enum to do numeric conversions
+// TODO investigate use of strum crate to codegen discriminant enum
 #[derive(num_enum::IntoPrimitive, num_enum::TryFromPrimitive, Copy, Clone, Debug, PartialEq)]
 #[repr(u16)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum TimeAlarmCmdCode {
+enum TimeAlarmCmdCode {
     GetCapabilities = 1,
     GetRealTime = 2,
     SetRealTime = 3,
@@ -47,7 +47,7 @@ pub enum TimeAlarmCmdCode {
 #[rustfmt::skip]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(PartialEq, Clone, Copy)] // TODO it's not clear to me if we should actually derive Copy - we need to to be included in the Odp messaging enum, but we're a large struct and so is it...
-pub enum AcpiTimeAlarmDeviceCommand {
+pub enum AcpiTimeAlarmRequest {
     GetCapabilities,                                            // 1: _GCP --> u32 (bitmask),                 failure: infallible
     GetRealTime,                                                // 2: _GRT --> AcpiTimestamp,                 failure: valid bit = 0 in returned timestamp
     SetRealTime(AcpiTimestamp),                                 // 3: _SRT --> u32 (bool),                    failure: u32::MAX
@@ -59,52 +59,53 @@ pub enum AcpiTimeAlarmDeviceCommand {
     GetExpiredTimerPolicy(AcpiTimerId),                         // 9: _TIP --> u32 (AlarmExpiredWakePolicy)   failure: infallible
 }
 
-impl AcpiTimeAlarmDeviceCommand {
-    pub fn from_bytes(command_code: TimeAlarmCmdCode, bytes: &[u8]) -> Result<Self, TimeAlarmCommandError> {
-        match command_code {
-            TimeAlarmCmdCode::GetCapabilities => Ok(AcpiTimeAlarmDeviceCommand::GetCapabilities),
-            TimeAlarmCmdCode::GetRealTime => Ok(AcpiTimeAlarmDeviceCommand::GetRealTime),
-            TimeAlarmCmdCode::SetRealTime => Ok(AcpiTimeAlarmDeviceCommand::SetRealTime(
-                AcpiTimestamp::try_from_bytes(bytes)?,
-            )),
-            _ => {
-                let (timer_id, bytes) = AcpiTimerId::try_from_bytes(bytes)?;
-                match command_code {
-                    TimeAlarmCmdCode::GetWakeStatus => Ok(AcpiTimeAlarmDeviceCommand::GetWakeStatus(timer_id)),
-                    TimeAlarmCmdCode::ClearWakeStatus => Ok(AcpiTimeAlarmDeviceCommand::ClearWakeStatus(timer_id)),
-                    TimeAlarmCmdCode::SetTimerValue => Ok(AcpiTimeAlarmDeviceCommand::SetTimerValue(
-                        timer_id,
-                        AlarmTimerSeconds(u32::from_le_bytes(bytes.try_into()?)),
-                    )),
-                    TimeAlarmCmdCode::GetTimerValue => Ok(AcpiTimeAlarmDeviceCommand::GetTimerValue(timer_id)),
-                    TimeAlarmCmdCode::SetExpiredTimerPolicy => Ok(AcpiTimeAlarmDeviceCommand::SetExpiredTimerPolicy(
-                        timer_id,
-                        AlarmExpiredWakePolicy(u32::from_le_bytes(bytes.try_into()?)),
-                    )),
-                    TimeAlarmCmdCode::GetExpiredTimerPolicy => {
-                        Ok(AcpiTimeAlarmDeviceCommand::GetExpiredTimerPolicy(timer_id))
-                    }
-                    _ => Err(TimeAlarmCommandError::UnknownCommand),
-                }
-            }
-        }
-    }
-    // TODO do we really need to_bytes?
-}
+// TODO convert to trait impl
+// impl AcpiTimeAlarmRequest {
+//     fn from_bytes(command_code: TimeAlarmCmdCode, bytes: &[u8]) -> Result<Self, TimeAlarmCommandError> {
+//         match command_code {
+//             TimeAlarmCmdCode::GetCapabilities => Ok(AcpiTimeAlarmRequest::GetCapabilities),
+//             TimeAlarmCmdCode::GetRealTime => Ok(AcpiTimeAlarmRequest::GetRealTime),
+//             TimeAlarmCmdCode::SetRealTime => {
+//                 Ok(AcpiTimeAlarmRequest::SetRealTime(AcpiTimestamp::try_from_bytes(bytes)?))
+//             }
+//             _ => {
+//                 let (timer_id, bytes) = AcpiTimerId::try_from_bytes(bytes)?;
+//                 match command_code {
+//                     TimeAlarmCmdCode::GetWakeStatus => Ok(AcpiTimeAlarmRequest::GetWakeStatus(timer_id)),
+//                     TimeAlarmCmdCode::ClearWakeStatus => Ok(AcpiTimeAlarmRequest::ClearWakeStatus(timer_id)),
+//                     TimeAlarmCmdCode::SetTimerValue => Ok(AcpiTimeAlarmRequest::SetTimerValue(
+//                         timer_id,
+//                         AlarmTimerSeconds(u32::from_le_bytes(bytes.try_into()?)),
+//                     )),
+//                     TimeAlarmCmdCode::GetTimerValue => Ok(AcpiTimeAlarmRequest::GetTimerValue(timer_id)),
+//                     TimeAlarmCmdCode::SetExpiredTimerPolicy => Ok(AcpiTimeAlarmRequest::SetExpiredTimerPolicy(
+//                         timer_id,
+//                         AlarmExpiredWakePolicy(u32::from_le_bytes(bytes.try_into()?)),
+//                     )),
+//                     TimeAlarmCmdCode::GetExpiredTimerPolicy => {
+//                         Ok(AcpiTimeAlarmRequest::GetExpiredTimerPolicy(timer_id))
+//                     }
+//                     _ => Err(TimeAlarmCommandError::UnknownCommand),
+//                 }
+//             }
+//         }
+//     }
+//     // TODO do we really need to_bytes?
+// }
 
 // TODO this seems like it should be unnecessary - we only need it to respond to messages because responses require a command field, but I don't see why they would. I think this is an artifact of having the request and response types stuffed in the same enum in the comms system? See if we can get rid of it
-impl From<&AcpiTimeAlarmDeviceCommand> for TimeAlarmCmdCode {
-    fn from(command: &AcpiTimeAlarmDeviceCommand) -> Self {
+impl From<&AcpiTimeAlarmRequest> for TimeAlarmCmdCode {
+    fn from(command: &AcpiTimeAlarmRequest) -> Self {
         match command {
-            AcpiTimeAlarmDeviceCommand::GetCapabilities => TimeAlarmCmdCode::GetCapabilities,
-            AcpiTimeAlarmDeviceCommand::GetRealTime => TimeAlarmCmdCode::GetRealTime,
-            AcpiTimeAlarmDeviceCommand::SetRealTime(_) => TimeAlarmCmdCode::SetRealTime,
-            AcpiTimeAlarmDeviceCommand::GetWakeStatus(_) => TimeAlarmCmdCode::GetWakeStatus,
-            AcpiTimeAlarmDeviceCommand::ClearWakeStatus(_) => TimeAlarmCmdCode::ClearWakeStatus,
-            AcpiTimeAlarmDeviceCommand::SetTimerValue(_, _) => TimeAlarmCmdCode::SetTimerValue,
-            AcpiTimeAlarmDeviceCommand::GetTimerValue(_) => TimeAlarmCmdCode::GetTimerValue,
-            AcpiTimeAlarmDeviceCommand::SetExpiredTimerPolicy(_, _) => TimeAlarmCmdCode::SetExpiredTimerPolicy,
-            AcpiTimeAlarmDeviceCommand::GetExpiredTimerPolicy(_) => TimeAlarmCmdCode::GetExpiredTimerPolicy,
+            AcpiTimeAlarmRequest::GetCapabilities => TimeAlarmCmdCode::GetCapabilities,
+            AcpiTimeAlarmRequest::GetRealTime => TimeAlarmCmdCode::GetRealTime,
+            AcpiTimeAlarmRequest::SetRealTime(_) => TimeAlarmCmdCode::SetRealTime,
+            AcpiTimeAlarmRequest::GetWakeStatus(_) => TimeAlarmCmdCode::GetWakeStatus,
+            AcpiTimeAlarmRequest::ClearWakeStatus(_) => TimeAlarmCmdCode::ClearWakeStatus,
+            AcpiTimeAlarmRequest::SetTimerValue(_, _) => TimeAlarmCmdCode::SetTimerValue,
+            AcpiTimeAlarmRequest::GetTimerValue(_) => TimeAlarmCmdCode::GetTimerValue,
+            AcpiTimeAlarmRequest::SetExpiredTimerPolicy(_, _) => TimeAlarmCmdCode::SetExpiredTimerPolicy,
+            AcpiTimeAlarmRequest::GetExpiredTimerPolicy(_) => TimeAlarmCmdCode::GetExpiredTimerPolicy,
         }
     }
 }
@@ -219,7 +220,7 @@ bitfield!(
 
 // TODO It's not clear to me if this should be a few options for Result instead - I'm unclear on how that would interact
 //      with the serialization logic, but it seems like it'd be nice if we could use Result instead?
-//      something like type TimeAlarmCommandResult = Result<AcpiTimeAlarmCommandResponse, TimeAlarmCommandError>;
+//      something like type TimeAlarmCommandResult = Result<AcpiTimeAlarmResponse, TimeAlarmCommandError>;
 //      and then remove OperationFailed?
 //
 //      Alternatively, maybe these shouldn't be in an enum at all - maybe they should all be distinct types and we should
@@ -228,7 +229,7 @@ bitfield!(
 #[derive(Copy, Clone, PartialEq)]
 // TODO it's not clear to me if we should actually derive Copy - we need to to be included in the Odp messaging enum, but we're a large struct and so is it...
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum AcpiTimeAlarmCommandResponse {
+pub enum AcpiTimeAlarmResponse {
     Capabilities(TimeAlarmDeviceCapabilities),
     RealTime(AcpiTimestamp),
     TimerStatus(TimerStatus),
@@ -239,7 +240,8 @@ pub enum AcpiTimeAlarmCommandResponse {
     OkNoData,
 }
 
-impl AcpiTimeAlarmCommandResponse {
+// TODO trait impl
+impl AcpiTimeAlarmResponse {
     fn u32_to_bytes(value: u32, buffer: &mut [u8]) -> Result<usize, TimeAlarmCommandError> {
         let result = value.to_le_bytes();
         buffer
@@ -270,3 +272,11 @@ impl AcpiTimeAlarmCommandResponse {
         }
     }
 }
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum AcpiTimeAlarmError {
+    GenericFailure,
+}
+
+pub type AcpiTimeAlarmResult = Result<AcpiTimeAlarmResponse, AcpiTimeAlarmError>;

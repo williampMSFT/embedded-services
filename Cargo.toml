@@ -15,8 +15,8 @@ members = [
     "platform-service",
     "power-button-service",
     "power-policy-service",
-    "time-alarm-service/service",
-    "time-alarm-service/messages",
+    "time-alarm-service",
+    "time-alarm-service-messages",
     "type-c-service",
     "debug-service",
     "debug-service-messages",
@@ -97,7 +97,7 @@ serde = { version = "1.0.*", default-features = false }
 static_cell = "2.1.0"
 toml = { version = "0.8", default-features = false }
 thermal-service-messages = { path = "./thermal-service-messages" }
-time-alarm-service-messages = { path = "./time-alarm-service/messages" }
+time-alarm-service-messages = { path = "./time-alarm-service-messages" }
 syn = "2.0"
 tps6699x = { git = "https://github.com/OpenDevicePartnership/tps6699x" }
 tokio = { version = "1.42.0" }
