@@ -79,41 +79,20 @@ impl From<&AcpiTimestamp> for RawAcpiTimestamp {
 
 // -------------------------------------------------
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u8)]
 pub enum AcpiDaylightSavingsTimeStatus {
     /// Daylight savings time is not observed in this timezone.
-    NotObserved,
+    NotObserved = 0,
 
     /// Daylight savings time is observed in this timezone, but the current time has not been adjusted for it.
-    NotAdjusted,
+    NotAdjusted = 1,
 
+    // Note: in the spec, this is a pair of flags where bit 0 = observed, bit 1 = adjusted.  2 (adjusted but not observed) is nonsensical, so we omit it.
+    //
     /// Daylight savings time is observed in this timezone, and the current time has been adjusted for it.
-    Adjusted,
-}
-
-impl TryFrom<u8> for AcpiDaylightSavingsTimeStatus {
-    type Error = TimeAlarmCommandError;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(Self::NotObserved),
-            1 => Ok(Self::NotAdjusted),
-            // 2 would be Adjusted but not Observed, which is nonsensical, so omitted.
-            3 => Ok(Self::Adjusted),
-            _ => Err(TimeAlarmCommandError::InvalidArgument),
-        }
-    }
-}
-
-impl From<AcpiDaylightSavingsTimeStatus> for u8 {
-    fn from(val: AcpiDaylightSavingsTimeStatus) -> Self {
-        match val {
-            AcpiDaylightSavingsTimeStatus::NotObserved => 0,
-            AcpiDaylightSavingsTimeStatus::NotAdjusted => 1,
-            AcpiDaylightSavingsTimeStatus::Adjusted => 3,
-        }
-    }
+    Adjusted = 3,
 }
 
 // -------------------------------------------------
@@ -171,7 +150,7 @@ impl From<AcpiTimeZone> for i16 {
 // -------------------------------------------------
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(PartialEq, Clone, Copy)] // TODO it's not clear to me if we should actually derive Copy - we need to to be included in the Odp messaging enum, but we're a large struct and so is it...
+#[derive(PartialEq, Clone, Copy)]
 pub struct AcpiTimestamp {
     pub datetime: Datetime,
     pub time_zone: AcpiTimeZone,

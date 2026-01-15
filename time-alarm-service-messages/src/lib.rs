@@ -3,7 +3,6 @@
 mod acpi_timestamp;
 pub use acpi_timestamp::{AcpiDaylightSavingsTimeStatus, AcpiTimeZone, AcpiTimestamp};
 use bitfield::bitfield;
-use core::array::TryFromSliceError;
 use embedded_services::relay::{MessageSerializationError, SerializableMessage};
 
 // TODO let's not have two separate error types...
@@ -21,8 +20,8 @@ impl From<embedded_mcu_hal::time::DatetimeError> for TimeAlarmCommandError {
     }
 }
 
-impl From<TryFromSliceError> for TimeAlarmCommandError {
-    fn from(_error: TryFromSliceError) -> Self {
+impl From<num_enum::TryFromPrimitiveError<AcpiDaylightSavingsTimeStatus>> for TimeAlarmCommandError {
+    fn from(_error: num_enum::TryFromPrimitiveError<AcpiDaylightSavingsTimeStatus>) -> Self {
         TimeAlarmCommandError::InvalidArgument
     }
 }
@@ -155,21 +154,6 @@ pub enum AcpiTimerId {
 }
 
 impl AcpiTimerId {
-    // TODO rm
-    // Given a byte slice, attempts to parse an AcpiTimerId from the first 4 bytes.
-    // Returns the parsed AcpiTimerId and a slice of the remaining bytes.\
-    // pub fn try_from_bytes(bytes: &'_ [u8]) -> Result<(Self, &'_ [u8]), TimeAlarmCommandError> {
-    //     const SIZE_BYTES: usize = core::mem::size_of::<u32>();
-    //     let id = u32::from_le_bytes(
-    //         bytes
-    //             .get(0..SIZE_BYTES)
-    //             .ok_or(TimeAlarmCommandError::InvalidArgument)?
-    //             .try_into()?,
-    //     );
-
-    //     Ok((AcpiTimerId::try_from(id)?, &bytes[SIZE_BYTES..]))
-    // }
-
     pub fn get_other_timer_id(&self) -> Self {
         match self {
             AcpiTimerId::AcPower => AcpiTimerId::DcPower,
@@ -177,19 +161,6 @@ impl AcpiTimerId {
         }
     }
 }
-
-// TODO rm
-// impl TryFrom<u32> for AcpiTimerId {
-//     type Error = TimeAlarmCommandError;
-
-//     fn try_from(value: u32) -> Result<Self, TimeAlarmCommandError> {
-//         match value {
-//             0 => Ok(AcpiTimerId::AcPower),
-//             1 => Ok(AcpiTimerId::DcPower),
-//             _ => Err(TimeAlarmCommandError::InvalidAcpiTimerId),
-//         }
-//     }
-// }
 
 bitfield!(
     #[derive(Copy, Clone, Default, PartialEq, Eq)]
