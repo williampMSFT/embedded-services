@@ -1,4 +1,4 @@
-use embedded_mcu_hal::time::{Datetime, UncheckedDatetime};
+use embedded_mcu_hal::time::{Datetime, Month, UncheckedDatetime};
 
 use crate::TimeAlarmCommandError;
 
@@ -62,7 +62,7 @@ impl From<&AcpiTimestamp> for RawAcpiTimestamp {
     fn from(ts: &AcpiTimestamp) -> Self {
         Self {
             year: ts.datetime.year(),
-            month: ts.datetime.month(),
+            month: ts.datetime.month().into(),
             day: ts.datetime.day(),
             hour: ts.datetime.hour(),
             minute: ts.datetime.minute(),
@@ -167,7 +167,7 @@ impl AcpiTimestamp {
         Ok(Self {
             datetime: Datetime::new(UncheckedDatetime {
                 year: raw.year,
-                month: raw.month,
+                month: Month::try_from(raw.month).map_err(|_| TimeAlarmCommandError::InvalidArgument)?,
                 day: raw.day,
                 hour: raw.hour,
                 minute: raw.minute,

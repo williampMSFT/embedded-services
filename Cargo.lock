@@ -687,7 +687,7 @@ dependencies = [
 [[package]]
 name = "embassy-imxrt"
 version = "0.1.0"
-source = "git+https://github.com/OpenDevicePartnership/embassy-imxrt#4699b3c023cd9276a7589c5cbdec8f6523a11739"
+source = "git+https://github.com/OpenDevicePartnership/embassy-imxrt#fbf7df43734625332214634188b21883af114115"
 dependencies = [
  "cfg-if",
  "cortex-m",
@@ -891,9 +891,10 @@ dependencies = [
 [[package]]
 name = "embedded-mcu-hal"
 version = "0.1.0"
-source = "git+https://github.com/OpenDevicePartnership/embedded-mcu#458f99699831ef5fbb557175334195cca7440f49"
+source = "git+https://github.com/OpenDevicePartnership/embedded-mcu#4dadf27b212ce91d884e9a33b3c2725d5d0511fb"
 dependencies = [
  "defmt 1.0.1",
+ "num_enum",
 ]
 
 [[package]]
@@ -1563,9 +1564,9 @@ dependencies = [
 
 [[package]]
 name = "num_enum"
-version = "0.7.4"
+version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a973b4e44ce6cad84ce69d797acf9a044532e4184c4f267913d1b546a0727b7a"
+checksum = "b1207a7e20ad57b847bbddc6776b968420d38292bbfe2089accff5e19e82454c"
 dependencies = [
  "num_enum_derive",
  "rustversion",
@@ -1573,9 +1574,9 @@ dependencies = [
 
 [[package]]
 name = "num_enum_derive"
-version = "0.7.4"
+version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77e878c846a8abae00dd069496dbe8751b16ac1c3d6bd2a7283a938e8228f90d"
+checksum = "ff32365de1b6743cb203b710788263c44a03de03802daf96092f2da4fe6ba4d7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1787,9 +1788,9 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rand_core"
-version = "0.6.4"
+version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 
 [[package]]
 name = "regex"
@@ -2033,7 +2034,7 @@ dependencies = [
 [[package]]
 name = "storage_bus"
 version = "0.1.0"
-source = "git+https://github.com/OpenDevicePartnership/embedded-mcu#458f99699831ef5fbb557175334195cca7440f49"
+source = "git+https://github.com/OpenDevicePartnership/embedded-mcu#4dadf27b212ce91d884e9a33b3c2725d5d0511fb"
 
 [[package]]
 name = "strsim"
