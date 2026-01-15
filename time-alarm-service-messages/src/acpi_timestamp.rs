@@ -3,7 +3,6 @@ use embedded_mcu_hal::time::{Datetime, UncheckedDatetime};
 use crate::TimeAlarmCommandError;
 
 // Timestamp structure as specified in the ACPI spec.  Must be exactly this layout.
-// TODO [TESTING] are there any endianness shenanigans associated with bytemuck here?
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

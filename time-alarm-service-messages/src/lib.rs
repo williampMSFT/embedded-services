@@ -3,6 +3,7 @@
 mod acpi_timestamp;
 pub use acpi_timestamp::{AcpiDaylightSavingsTimeStatus, AcpiTimeZone, AcpiTimestamp};
 use bitfield::bitfield;
+use core::array::TryFromSliceError;
 use embedded_services::relay::{MessageSerializationError, SerializableMessage};
 
 // TODO let's not have two separate error types...
@@ -26,19 +27,10 @@ impl From<num_enum::TryFromPrimitiveError<AcpiDaylightSavingsTimeStatus>> for Ti
     }
 }
 
-#[derive(num_enum::IntoPrimitive, num_enum::TryFromPrimitive, Copy, Clone, Debug, PartialEq)]
-#[repr(u16)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum TimeAlarmCmdCode {
-    GetCapabilities = 1,
-    GetRealTime = 2,
-    SetRealTime = 3,
-    GetWakeStatus = 4,
-    ClearWakeStatus = 5,
-    SetTimerValue = 6,
-    GetTimerValue = 7,
-    SetExpiredTimerPolicy = 8,
-    GetExpiredTimerPolicy = 9,
+impl From<TryFromSliceError> for TimeAlarmCommandError {
+    fn from(_error: TryFromSliceError) -> Self {
+        TimeAlarmCommandError::InvalidArgument
+    }
 }
 
 /// Message types for the ACPI Time and Alarm device service.
@@ -59,53 +51,101 @@ pub enum AcpiTimeAlarmRequest {
     GetExpiredTimerPolicy(AcpiTimerId),                         // 9: _TIP --> u32 (AlarmExpiredWakePolicy)   failure: infallible
 }
 
-// TODO convert to trait impl
-// impl AcpiTimeAlarmRequest {
-//     fn from_bytes(command_code: TimeAlarmCmdCode, bytes: &[u8]) -> Result<Self, TimeAlarmCommandError> {
-//         match command_code {
-//             TimeAlarmCmdCode::GetCapabilities => Ok(AcpiTimeAlarmRequest::GetCapabilities),
-//             TimeAlarmCmdCode::GetRealTime => Ok(AcpiTimeAlarmRequest::GetRealTime),
-//             TimeAlarmCmdCode::SetRealTime => {
-//                 Ok(AcpiTimeAlarmRequest::SetRealTime(AcpiTimestamp::try_from_bytes(bytes)?))
-//             }
-//             _ => {
-//                 let (timer_id, bytes) = AcpiTimerId::try_from_bytes(bytes)?;
-//                 match command_code {
-//                     TimeAlarmCmdCode::GetWakeStatus => Ok(AcpiTimeAlarmRequest::GetWakeStatus(timer_id)),
-//                     TimeAlarmCmdCode::ClearWakeStatus => Ok(AcpiTimeAlarmRequest::ClearWakeStatus(timer_id)),
-//                     TimeAlarmCmdCode::SetTimerValue => Ok(AcpiTimeAlarmRequest::SetTimerValue(
-//                         timer_id,
-//                         AlarmTimerSeconds(u32::from_le_bytes(bytes.try_into()?)),
-//                     )),
-//                     TimeAlarmCmdCode::GetTimerValue => Ok(AcpiTimeAlarmRequest::GetTimerValue(timer_id)),
-//                     TimeAlarmCmdCode::SetExpiredTimerPolicy => Ok(AcpiTimeAlarmRequest::SetExpiredTimerPolicy(
-//                         timer_id,
-//                         AlarmExpiredWakePolicy(u32::from_le_bytes(bytes.try_into()?)),
-//                     )),
-//                     TimeAlarmCmdCode::GetExpiredTimerPolicy => {
-//                         Ok(AcpiTimeAlarmRequest::GetExpiredTimerPolicy(timer_id))
-//                     }
-//                     _ => Err(TimeAlarmCommandError::UnknownCommand),
-//                 }
-//             }
-//         }
-//     }
-//     // TODO do we really need to_bytes?
-// }
+#[derive(num_enum::IntoPrimitive, num_enum::TryFromPrimitive, Copy, Clone, Debug, PartialEq)]
+#[repr(u16)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+enum AcpiTimeAlarmRequestDiscriminant {
+    GetCapabilities = 1,
+    GetRealTime = 2,
+    SetRealTime = 3,
+    GetWakeStatus = 4,
+    ClearWakeStatus = 5,
+    SetTimerValue = 6,
+    GetTimerValue = 7,
+    SetExpiredTimerPolicy = 8,
+    GetExpiredTimerPolicy = 9,
+}
 
-// TODO this seems like it should be unnecessary - we only need it to respond to messages because responses require a command field, but I don't see why they would. I think this is an artifact of having the request and response types stuffed in the same enum in the comms system? See if we can get rid of it
-impl From<&AcpiTimeAlarmRequest> for TimeAlarmCmdCode {
-    fn from(command: &AcpiTimeAlarmRequest) -> Self {
-        match command {
-            AcpiTimeAlarmRequest::GetCapabilities => TimeAlarmCmdCode::GetCapabilities,
-            AcpiTimeAlarmRequest::GetRealTime => TimeAlarmCmdCode::GetRealTime,
-            AcpiTimeAlarmRequest::SetRealTime(_) => TimeAlarmCmdCode::SetRealTime,
-            AcpiTimeAlarmRequest::GetWakeStatus(_) => TimeAlarmCmdCode::GetWakeStatus,
-            AcpiTimeAlarmRequest::ClearWakeStatus(_) => TimeAlarmCmdCode::ClearWakeStatus,
-            AcpiTimeAlarmRequest::SetTimerValue(_, _) => TimeAlarmCmdCode::SetTimerValue,
-            AcpiTimeAlarmRequest::GetTimerValue(_) => TimeAlarmCmdCode::GetTimerValue,
-            AcpiTimeAlarmRequest::SetExpiredTimerPolicy(_, _) => TimeAlarmCmdCode::SetExpiredTimerPolicy,
-            AcpiTimeAlarmRequest::GetExpiredTimerPolicy(_) => TimeAlarmCmdCode::GetExpiredTimerPolicy,
+impl SerializableMessage for AcpiTimeAlarmRequest {
+    fn serialize(self, _buffer: &mut [u8]) -> Result<usize, MessageSerializationError> {
+        todo!("Serialization of requests not yet supported on EC")
+    }
+
+    fn discriminant(&self) -> u16 {
+        match self {
+            AcpiTimeAlarmRequest::GetCapabilities => AcpiTimeAlarmRequestDiscriminant::GetCapabilities.into(),
+            AcpiTimeAlarmRequest::GetRealTime => AcpiTimeAlarmRequestDiscriminant::GetRealTime.into(),
+            AcpiTimeAlarmRequest::SetRealTime(_) => AcpiTimeAlarmRequestDiscriminant::SetRealTime.into(),
+            AcpiTimeAlarmRequest::GetWakeStatus(_) => AcpiTimeAlarmRequestDiscriminant::GetWakeStatus.into(),
+            AcpiTimeAlarmRequest::ClearWakeStatus(_) => AcpiTimeAlarmRequestDiscriminant::ClearWakeStatus.into(),
+            AcpiTimeAlarmRequest::SetTimerValue(_, _) => AcpiTimeAlarmRequestDiscriminant::SetTimerValue.into(),
+            AcpiTimeAlarmRequest::GetTimerValue(_) => AcpiTimeAlarmRequestDiscriminant::GetTimerValue.into(),
+            AcpiTimeAlarmRequest::SetExpiredTimerPolicy(_, _) => {
+                AcpiTimeAlarmRequestDiscriminant::SetExpiredTimerPolicy.into()
+            }
+            AcpiTimeAlarmRequest::GetExpiredTimerPolicy(_) => {
+                AcpiTimeAlarmRequestDiscriminant::GetExpiredTimerPolicy.into()
+            }
+        }
+    }
+
+    fn deserialize(discriminant: u16, buffer: &[u8]) -> Result<Self, MessageSerializationError> {
+        let discriminant = AcpiTimeAlarmRequestDiscriminant::try_from(discriminant)
+            .map_err(|_| MessageSerializationError::UnknownMessageDiscriminant(discriminant))?;
+        match discriminant {
+            AcpiTimeAlarmRequestDiscriminant::GetCapabilities => Ok(AcpiTimeAlarmRequest::GetCapabilities),
+            AcpiTimeAlarmRequestDiscriminant::GetRealTime => Ok(AcpiTimeAlarmRequest::GetRealTime),
+            AcpiTimeAlarmRequestDiscriminant::SetRealTime => Ok(AcpiTimeAlarmRequest::SetRealTime(
+                AcpiTimestamp::try_from_bytes(buffer)
+                    .map_err(|_| MessageSerializationError::InvalidPayload("Could not deserialize timestamp"))?,
+            )),
+            _ => {
+                let (timer_id, buffer) = buffer
+                    .split_at_checked(4)
+                    .ok_or(MessageSerializationError::BufferTooSmall)?;
+                let timer_id = AcpiTimerId::try_from(u32::from_le_bytes(
+                    timer_id
+                        .try_into()
+                        .map_err(|_| MessageSerializationError::BufferTooSmall)?,
+                ))
+                .map_err(|_| MessageSerializationError::InvalidPayload("Could not deserialize timer ID"))?;
+
+                match discriminant {
+                    AcpiTimeAlarmRequestDiscriminant::GetWakeStatus => {
+                        Ok(AcpiTimeAlarmRequest::GetWakeStatus(timer_id))
+                    }
+                    AcpiTimeAlarmRequestDiscriminant::ClearWakeStatus => {
+                        Ok(AcpiTimeAlarmRequest::ClearWakeStatus(timer_id))
+                    }
+                    AcpiTimeAlarmRequestDiscriminant::SetTimerValue => Ok(AcpiTimeAlarmRequest::SetTimerValue(
+                        timer_id,
+                        AlarmTimerSeconds(u32::from_le_bytes(
+                            buffer
+                                .try_into()
+                                .map_err(|_| MessageSerializationError::BufferTooSmall)?,
+                        )),
+                    )),
+                    AcpiTimeAlarmRequestDiscriminant::GetTimerValue => {
+                        Ok(AcpiTimeAlarmRequest::GetTimerValue(timer_id))
+                    }
+                    AcpiTimeAlarmRequestDiscriminant::SetExpiredTimerPolicy => {
+                        Ok(AcpiTimeAlarmRequest::SetExpiredTimerPolicy(
+                            timer_id,
+                            AlarmExpiredWakePolicy(u32::from_le_bytes(
+                                buffer
+                                    .try_into()
+                                    .map_err(|_| MessageSerializationError::BufferTooSmall)?,
+                            )),
+                        ))
+                    }
+                    AcpiTimeAlarmRequestDiscriminant::GetExpiredTimerPolicy => {
+                        Ok(AcpiTimeAlarmRequest::GetExpiredTimerPolicy(timer_id))
+                    }
+                    _ => Err(MessageSerializationError::UnknownMessageDiscriminant(
+                        discriminant.into(),
+                    )),
+                }
+            }
         }
     }
 }
@@ -193,16 +233,7 @@ bitfield!(
 
 // -------------------------------------------------
 
-// TODO It's not clear to me if this should be a few options for Result instead - I'm unclear on how that would interact
-//      with the serialization logic, but it seems like it'd be nice if we could use Result instead?
-//      something like type TimeAlarmCommandResult = Result<AcpiTimeAlarmResponse, TimeAlarmCommandError>;
-//      and then remove OperationFailed?
-//
-//      Alternatively, maybe these shouldn't be in an enum at all - maybe they should all be distinct types and we should
-//      just require that everything on the bus implement some Serializable trait for relay to the host?
-//
 #[derive(Copy, Clone, PartialEq)]
-// TODO it's not clear to me if we should actually derive Copy - we need to to be included in the Odp messaging enum, but we're a large struct and so is it...
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AcpiTimeAlarmResponse {
     Capabilities(TimeAlarmDeviceCapabilities),
@@ -215,27 +246,40 @@ pub enum AcpiTimeAlarmResponse {
     OkNoData,
 }
 
+#[derive(Copy, Clone, PartialEq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive)]
+#[repr(u16)]
+enum AcpiTimeAlarmResponseDiscriminant {
+    Capabilities = 1,
+    RealTime = 2,
+    TimerStatus = 3,
+    WakePolicy = 4,
+    TimerSeconds = 5,
+    OkNoData = 6,
+}
+
 // TODO trait impl
 impl AcpiTimeAlarmResponse {
-    fn u32_to_bytes(value: u32, buffer: &mut [u8]) -> Result<usize, TimeAlarmCommandError> {
+    // TODO can we get this for free somewhere?
+    fn u32_to_bytes(value: u32, buffer: &mut [u8]) -> Result<usize, MessageSerializationError> {
         let result = value.to_le_bytes();
         buffer
             .split_at_mut_checked(result.len())
-            .ok_or(TimeAlarmCommandError::InvalidArgument)?
+            .ok_or(MessageSerializationError::BufferTooSmall)?
             .0
             .copy_from_slice(&result);
         Ok(result.len())
     }
+}
 
-    pub fn to_bytes(&self, buffer: &mut [u8]) -> Result<usize, TimeAlarmCommandError> {
-        // TODO It's not clear to me how error reporting is meant to work here - the comms system has a facility for reporting a failure status, but I can't find any evidence that it actually gets put into the packet that we receive on the other side. We may need to make space for a return code in here if that facility is not viable for reporting errors.
+impl SerializableMessage for AcpiTimeAlarmResponse {
+    fn serialize(self, buffer: &mut [u8]) -> Result<usize, MessageSerializationError> {
         match self {
             Self::Capabilities(capabilities) => Self::u32_to_bytes(capabilities.0, buffer),
             Self::RealTime(timestamp) => {
                 let result = timestamp.as_bytes();
                 buffer
                     .split_at_mut_checked(result.len())
-                    .ok_or(TimeAlarmCommandError::InvalidArgument)?
+                    .ok_or(MessageSerializationError::BufferTooSmall)?
                     .0
                     .copy_from_slice(&result);
                 Ok(result.len())
@@ -245,6 +289,23 @@ impl AcpiTimeAlarmResponse {
             Self::TimerSeconds(timer_seconds) => Self::u32_to_bytes(timer_seconds.0, buffer),
             Self::OkNoData => Ok(0),
         }
+    }
+
+    fn discriminant(&self) -> u16 {
+        match self {
+            Self::Capabilities(_) => AcpiTimeAlarmResponseDiscriminant::Capabilities.into(),
+            Self::RealTime(_) => AcpiTimeAlarmResponseDiscriminant::RealTime.into(),
+            Self::TimerStatus(_) => AcpiTimeAlarmResponseDiscriminant::TimerStatus.into(),
+            Self::WakePolicy(_) => AcpiTimeAlarmResponseDiscriminant::WakePolicy.into(),
+            Self::TimerSeconds(_) => AcpiTimeAlarmResponseDiscriminant::TimerSeconds.into(),
+            Self::OkNoData => AcpiTimeAlarmResponseDiscriminant::OkNoData.into(),
+        }
+    }
+
+    fn deserialize(discriminant: u16, _buffer: &[u8]) -> Result<Self, MessageSerializationError> {
+        let _discriminant = AcpiTimeAlarmResponseDiscriminant::try_from(discriminant)
+            .map_err(|_| MessageSerializationError::UnknownMessageDiscriminant(discriminant))?;
+        todo!("Deserialization of responses not yet supported on EC")
     }
 }
 
@@ -257,34 +318,6 @@ pub enum AcpiTimeAlarmError {
 pub type AcpiTimeAlarmResult = Result<AcpiTimeAlarmResponse, AcpiTimeAlarmError>;
 
 // TODO implement these, move to be with their types
-impl SerializableMessage for AcpiTimeAlarmRequest {
-    fn serialize(self, _buffer: &mut [u8]) -> Result<usize, MessageSerializationError> {
-        todo!()
-    }
-
-    fn discriminant(&self) -> u16 {
-        todo!()
-    }
-
-    fn deserialize(_discriminant: u16, _buffer: &[u8]) -> Result<Self, MessageSerializationError> {
-        todo!()
-    }
-}
-
-impl SerializableMessage for AcpiTimeAlarmResponse {
-    fn serialize(self, _buffer: &mut [u8]) -> Result<usize, MessageSerializationError> {
-        todo!()
-    }
-
-    fn discriminant(&self) -> u16 {
-        todo!()
-    }
-
-    fn deserialize(_discriminant: u16, _buffer: &[u8]) -> Result<Self, MessageSerializationError> {
-        todo!()
-    }
-}
-
 impl SerializableMessage for AcpiTimeAlarmError {
     fn serialize(self, _buffer: &mut [u8]) -> Result<usize, MessageSerializationError> {
         todo!()
