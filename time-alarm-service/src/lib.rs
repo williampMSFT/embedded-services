@@ -232,7 +232,7 @@ impl Service {
                     let result: AcpiTimeAlarmResult = self
                         .handle_acpi_command(acpi_command)
                         .await
-                        .map_err(|_| time_alarm_service_messages::AcpiTimeAlarmError::GenericFailure);
+                        .map_err(|_| time_alarm_service_messages::AcpiTimeAlarmError::UnspecifiedFailure);
                     self.endpoint
                         .send(respond_to_endpoint, &result)
                         .await

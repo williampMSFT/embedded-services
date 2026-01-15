@@ -309,25 +309,32 @@ impl SerializableMessage for AcpiTimeAlarmResponse {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u16)]
 pub enum AcpiTimeAlarmError {
-    GenericFailure,
+    UnspecifiedFailure = 1,
 }
 
 pub type AcpiTimeAlarmResult = Result<AcpiTimeAlarmResponse, AcpiTimeAlarmError>;
 
-// TODO implement these, move to be with their types
 impl SerializableMessage for AcpiTimeAlarmError {
     fn serialize(self, _buffer: &mut [u8]) -> Result<usize, MessageSerializationError> {
-        todo!()
+        match self {
+            Self::UnspecifiedFailure => Ok(0),
+        }
     }
 
     fn discriminant(&self) -> u16 {
-        todo!()
+        (*self).into()
     }
 
-    fn deserialize(_discriminant: u16, _buffer: &[u8]) -> Result<Self, MessageSerializationError> {
-        todo!()
+    fn deserialize(discriminant: u16, _buffer: &[u8]) -> Result<Self, MessageSerializationError> {
+        let discriminant = AcpiTimeAlarmError::try_from(discriminant)
+            .map_err(|_| MessageSerializationError::UnknownMessageDiscriminant(discriminant))?;
+
+        match discriminant {
+            AcpiTimeAlarmError::UnspecifiedFailure => Ok(AcpiTimeAlarmError::UnspecifiedFailure),
+        }
     }
 }
