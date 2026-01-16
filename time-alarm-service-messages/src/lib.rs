@@ -6,33 +6,6 @@ use bitfield::bitfield;
 use core::array::TryFromSliceError;
 use embedded_services::relay::{MessageSerializationError, SerializableMessage};
 
-// TODO let's not have two separate error types...
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum TimeAlarmCommandError {
-    UnknownCommand,
-    InvalidArgument,
-    InvalidAcpiTimerId,
-}
-
-impl From<embedded_mcu_hal::time::DatetimeError> for TimeAlarmCommandError {
-    fn from(_error: embedded_mcu_hal::time::DatetimeError) -> Self {
-        TimeAlarmCommandError::InvalidArgument
-    }
-}
-
-impl From<num_enum::TryFromPrimitiveError<AcpiDaylightSavingsTimeStatus>> for TimeAlarmCommandError {
-    fn from(_error: num_enum::TryFromPrimitiveError<AcpiDaylightSavingsTimeStatus>) -> Self {
-        TimeAlarmCommandError::InvalidArgument
-    }
-}
-
-impl From<TryFromSliceError> for TimeAlarmCommandError {
-    fn from(_error: TryFromSliceError) -> Self {
-        TimeAlarmCommandError::InvalidArgument
-    }
-}
-
 /// Message types for the ACPI Time and Alarm device service.
 /// These directly analogous to the ACPI Time and Alarm device methods.
 /// See ACPI Specification 6.4, Section 9.18 "Time and Alarm Device" for additional details on semantics.
@@ -316,8 +289,6 @@ pub enum AcpiTimeAlarmError {
     UnspecifiedFailure = 1,
 }
 
-pub type AcpiTimeAlarmResult = Result<AcpiTimeAlarmResponse, AcpiTimeAlarmError>;
-
 impl SerializableMessage for AcpiTimeAlarmError {
     fn serialize(self, _buffer: &mut [u8]) -> Result<usize, MessageSerializationError> {
         match self {
@@ -338,3 +309,23 @@ impl SerializableMessage for AcpiTimeAlarmError {
         }
     }
 }
+
+impl From<embedded_mcu_hal::time::DatetimeError> for AcpiTimeAlarmError {
+    fn from(_error: embedded_mcu_hal::time::DatetimeError) -> Self {
+        AcpiTimeAlarmError::UnspecifiedFailure
+    }
+}
+
+impl From<num_enum::TryFromPrimitiveError<AcpiDaylightSavingsTimeStatus>> for AcpiTimeAlarmError {
+    fn from(_error: num_enum::TryFromPrimitiveError<AcpiDaylightSavingsTimeStatus>) -> Self {
+        AcpiTimeAlarmError::UnspecifiedFailure
+    }
+}
+
+impl From<TryFromSliceError> for AcpiTimeAlarmError {
+    fn from(_error: TryFromSliceError) -> Self {
+        AcpiTimeAlarmError::UnspecifiedFailure
+    }
+}
+
+pub type AcpiTimeAlarmResult = Result<AcpiTimeAlarmResponse, AcpiTimeAlarmError>;

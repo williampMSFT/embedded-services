@@ -98,7 +98,7 @@ mod time_zone_data {
         ///
         pub fn get_data(&self) -> (AcpiTimeZone, AcpiDaylightSavingsTimeStatus) {
             let representation: RawTimeZoneData = bytemuck::cast(self.storage.read());
-            (|| -> Result<(AcpiTimeZone, AcpiDaylightSavingsTimeStatus), time_alarm_service_messages::TimeAlarmCommandError> {
+            (|| -> Result<(AcpiTimeZone, AcpiDaylightSavingsTimeStatus), time_alarm_service_messages::AcpiTimeAlarmError> {
                 Ok((representation.tz.try_into()?, representation.dst.try_into()?))
             })()
             .unwrap_or_else(|_| (AcpiTimeZone::Unknown, AcpiDaylightSavingsTimeStatus::NotObserved))

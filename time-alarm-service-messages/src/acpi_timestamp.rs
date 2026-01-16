@@ -1,6 +1,6 @@
 use embedded_mcu_hal::time::{Datetime, Month, UncheckedDatetime};
 
-use crate::TimeAlarmCommandError;
+use crate::AcpiTimeAlarmError;
 
 // Timestamp structure as specified in the ACPI spec.  Must be exactly this layout.
 #[repr(C)]
@@ -45,12 +45,12 @@ struct RawAcpiTimestamp {
 impl RawAcpiTimestamp {
     // Try to interpret a byte slice as an AcpiTimestamp.  The slice must be exactly 16 bytes long.
     // Validity of the fields is not checked here.
-    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, TimeAlarmCommandError> {
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, AcpiTimeAlarmError> {
         let bytes = bytes
             .get(..core::mem::size_of::<Self>())
-            .ok_or(TimeAlarmCommandError::InvalidArgument)?;
+            .ok_or(AcpiTimeAlarmError::UnspecifiedFailure)?;
         // TODO investigate zerocopy
-        bytemuck::try_pod_read_unaligned(bytes).map_err(|_| TimeAlarmCommandError::InvalidArgument)
+        bytemuck::try_pod_read_unaligned(bytes).map_err(|_| AcpiTimeAlarmError::UnspecifiedFailure)
     }
 
     // Get a byte slice representing this AcpiTimestamp.
@@ -106,11 +106,12 @@ pub struct AcpiTimeZoneOffset {
 }
 
 impl AcpiTimeZoneOffset {
-    pub fn new(minutes_from_utc: i16) -> Result<Self, TimeAlarmCommandError> {
+    pub fn new(minutes_from_utc: i16) -> Result<Self, AcpiTimeAlarmError> {
         if !(-1440..=1440).contains(&minutes_from_utc) {
-            return Err(TimeAlarmCommandError::InvalidArgument);
+            Err(AcpiTimeAlarmError::UnspecifiedFailure)
+        } else {
+            Ok(Self { minutes_from_utc })
         }
-        Ok(Self { minutes_from_utc })
     }
 
     pub fn minutes_from_utc(&self) -> i16 {
@@ -129,9 +130,9 @@ pub enum AcpiTimeZone {
 }
 
 impl TryFrom<i16> for AcpiTimeZone {
-    type Error = TimeAlarmCommandError;
+    type Error = AcpiTimeAlarmError;
 
-    fn try_from(value: i16) -> Result<Self, TimeAlarmCommandError> {
+    fn try_from(value: i16) -> Result<Self, AcpiTimeAlarmError> {
         if value == 2047 {
             Ok(Self::Unknown)
         } else {
@@ -164,13 +165,13 @@ impl AcpiTimestamp {
         *RawAcpiTimestamp::from(self).as_bytes()
     }
 
-    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, TimeAlarmCommandError> {
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, AcpiTimeAlarmError> {
         let raw = RawAcpiTimestamp::try_from_bytes(bytes)?;
 
         Ok(Self {
             datetime: Datetime::new(UncheckedDatetime {
                 year: raw.year,
-                month: Month::try_from(raw.month).map_err(|_| TimeAlarmCommandError::InvalidArgument)?,
+                month: Month::try_from(raw.month).map_err(|_| AcpiTimeAlarmError::UnspecifiedFailure)?,
                 day: raw.day,
                 hour: raw.hour,
                 minute: raw.minute,
