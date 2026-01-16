@@ -54,6 +54,7 @@ defmt = [
     "embassy-imxrt/defmt",
     "mctp-rs/defmt",
     "thermal-service-messages/defmt",
+    "time-alarm-service-messages/defmt",
 ]
 
 log = ["dep:log", "embedded-services/log", "embassy-time/log"]

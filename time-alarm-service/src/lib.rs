@@ -229,17 +229,20 @@ impl Service {
 
             match select(acpi_command, power_source_change).await {
                 Either::First((respond_to_endpoint, acpi_command)) => {
+                    info!("[Time/Alarm] Received command: {:?}", acpi_command);
                     let result: AcpiTimeAlarmResult = self
                         .handle_acpi_command(acpi_command)
                         .await
                         .map_err(|_| time_alarm_service_messages::AcpiTimeAlarmError::UnspecifiedFailure);
+
+                    info!("[Time/Alarm] Responding with: {:?}", result);
                     self.endpoint
                         .send(respond_to_endpoint, &result)
                         .await
                         .expect("send returns Infallible");
                 }
                 Either::Second(new_power_source) => {
-                    info!("Power source changed to {:?}", new_power_source);
+                    info!("[Time/Alarm] Power source changed to {:?}", new_power_source);
 
                     self.timers
                         .get_timer(new_power_source.get_other_timer_id())
@@ -267,7 +270,7 @@ impl Service {
                 "Timer {:?} expired and would trigger a wake now, but the power service is not yet implemented so will currently do nothing",
                 timer_id
             );
-            // TODO [COMMS] Figure out how to signal a wake event to the host and do that here
+            // TODO [COMMS] We can't currently trigger a wake because the power service isn't implemented yet - when it is, we need to notify it here
         }
     }
 
@@ -275,7 +278,6 @@ impl Service {
         &'static self,
         command: AcpiTimeAlarmRequest,
     ) -> Result<AcpiTimeAlarmResponse, TimeAlarmError> {
-        info!("Received Time-Alarm Device command: {:?}", command);
         match command {
             AcpiTimeAlarmRequest::GetCapabilities => Ok(AcpiTimeAlarmResponse::Capabilities(self.capabilities)),
             AcpiTimeAlarmRequest::GetRealTime => self.clock_state.lock(|clock_state| {
