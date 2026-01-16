@@ -38,7 +38,7 @@ impl From<TryFromSliceError> for TimeAlarmCommandError {
 /// See ACPI Specification 6.4, Section 9.18 "Time and Alarm Device" for additional details on semantics.
 #[rustfmt::skip]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(PartialEq, Clone, Copy)] // TODO it's not clear to me if we should actually derive Copy - we need to to be included in the Odp messaging enum, but we're a large struct and so is it...
+#[derive(PartialEq, Clone, Copy)]
 pub enum AcpiTimeAlarmRequest {
     GetCapabilities,                                            // 1: _GCP --> u32 (bitmask),                 failure: infallible
     GetRealTime,                                                // 2: _GRT --> AcpiTimestamp,                 failure: valid bit = 0 in returned timestamp
