@@ -15,6 +15,7 @@ use embedded_services::{GlobalRawMutex, comms::MailboxDelegateError};
 use embedded_services::{comms, error, info, warn};
 use time_alarm_service_messages::*;
 
+pub mod task;
 mod timer;
 use timer::Timer;
 
@@ -168,14 +169,13 @@ impl Service {
     //
     pub async fn init(
         service_storage: &'static OnceLock<Service>,
-        spawner: &embassy_executor::Spawner,
         backing_clock: &'static mut impl DatetimeClock,
         tz_storage: &'static mut dyn NvramStorage<'static, u32>,
         ac_expiration_storage: &'static mut dyn NvramStorage<'static, u32>,
         ac_policy_storage: &'static mut dyn NvramStorage<'static, u32>,
         dc_expiration_storage: &'static mut dyn NvramStorage<'static, u32>,
         dc_policy_storage: &'static mut dyn NvramStorage<'static, u32>,
-    ) -> Result<(), TimeAlarmError> {
+    ) -> Result<&'static Service, TimeAlarmError> {
         info!("Starting time-alarm service task");
 
         let service = service_storage.get_or_init(|| Service {
@@ -215,14 +215,10 @@ impl Service {
 
         comms::register_endpoint(service, &service.endpoint).await?;
 
-        spawner.must_spawn(command_handler_task(service));
-        spawner.must_spawn(timer_task(service, AcpiTimerId::AcPower));
-        spawner.must_spawn(timer_task(service, AcpiTimerId::DcPower));
-
-        Ok(())
+        Ok(service)
     }
 
-    pub async fn handle_requests(&'static self) {
+    pub(crate) async fn handle_requests(&'static self) -> ! {
         loop {
             let acpi_command = self.acpi_channel.receive();
             let power_source_change = self.power_source_signal.wait();
@@ -255,7 +251,7 @@ impl Service {
         }
     }
 
-    pub async fn handle_timer(&'static self, timer_id: AcpiTimerId) {
+    pub(crate) async fn handle_timer(&'static self, timer_id: AcpiTimerId) -> ! {
         let timer = self.timers.get_timer(timer_id);
         loop {
             timer.wait_until_wake(&self.clock_state).await;
@@ -267,7 +263,7 @@ impl Service {
                 .set_timer_wake_policy(&self.clock_state, AlarmExpiredWakePolicy::NEVER);
 
             warn!(
-                "Timer {:?} expired and would trigger a wake now, but the power service is not yet implemented so will currently do nothing",
+                "[Time/Alarm] Timer {:?} expired and would trigger a wake now, but the power service is not yet implemented so will currently do nothing",
                 timer_id
             );
             // TODO [COMMS] We can't currently trigger a wake because the power service isn't implemented yet - when it is, we need to notify it here
@@ -358,8 +354,6 @@ impl Service {
 
 impl comms::MailboxDelegate for Service {
     fn receive(&self, message: &comms::Message) -> Result<(), comms::MailboxDelegateError> {
-        info!("Received message at time-alarm-service");
-
         if let Some(acpi_cmd) = message.data.get::<time_alarm_service_messages::AcpiTimeAlarmRequest>() {
             self.acpi_channel
                 .try_send((message.from, *acpi_cmd))
@@ -372,17 +366,4 @@ impl comms::MailboxDelegate for Service {
             Err(comms::MailboxDelegateError::InvalidData)
         }
     }
-}
-
-// TODO move these to a setup macro that the application layer invokes
-#[embassy_executor::task]
-async fn command_handler_task(service: &'static Service) {
-    info!("Starting time-alarm service task");
-    service.handle_requests().await;
-}
-
-#[embassy_executor::task(pool_size = 2)]
-async fn timer_task(service: &'static Service, timer_id: AcpiTimerId) {
-    info!("Starting time-alarm timer task");
-    service.handle_timer(timer_id).await;
 }

@@ -46,15 +46,11 @@ impl RawAcpiTimestamp {
     // Try to interpret a byte slice as an AcpiTimestamp.  The slice must be exactly 16 bytes long.
     // Validity of the fields is not checked here.
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, TimeAlarmCommandError> {
-        use defmt::error; // TODO rm
-        error!("DEBUG: RawAcpiTimestamp::try_from_bytes: {:?}", bytes); // TODO remove before checkin
         let bytes = bytes
             .get(..core::mem::size_of::<Self>())
             .ok_or(TimeAlarmCommandError::InvalidArgument)?;
         // TODO investigate zerocopy
-        let result = bytemuck::try_pod_read_unaligned(bytes).map_err(|_| TimeAlarmCommandError::InvalidArgument);
-        error!("DEBUG: RawAcpiTimestamp::try_from_bytes yields: {:?}", result); // TODO remove before checkin
-        result
+        bytemuck::try_pod_read_unaligned(bytes).map_err(|_| TimeAlarmCommandError::InvalidArgument)
     }
 
     // Get a byte slice representing this AcpiTimestamp.
