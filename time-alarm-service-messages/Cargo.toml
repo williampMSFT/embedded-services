@@ -7,27 +7,15 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-# TODO audit these, I think we don't need a lot of them
 bitfield.workspace = true
 bytemuck.workspace = true
 defmt = { workspace = true, optional = true }
-log = { workspace = true, optional = true }
-embassy-executor.workspace = true
-embassy-futures.workspace = true
-embassy-sync.workspace = true
-embassy-time.workspace = true
 embedded-mcu-hal.workspace = true
 embedded-services.workspace = true
 num_enum.workspace = true
 
-# TODO do we need all these?
 [features]
-defmt = [
-    "dep:defmt",
-    "embassy-time/defmt",
-    "embassy-sync/defmt",
-    "embassy-executor/defmt",
-]
+defmt = ["dep:defmt"]
 
 [lints]
 workspace = true

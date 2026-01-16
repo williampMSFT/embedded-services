@@ -2,6 +2,7 @@
 
 mod acpi_timestamp;
 pub use acpi_timestamp::{AcpiDaylightSavingsTimeStatus, AcpiTimeZone, AcpiTimestamp};
+
 use bitfield::bitfield;
 use core::array::TryFromSliceError;
 use embedded_services::relay::{MessageSerializationError, SerializableMessage};

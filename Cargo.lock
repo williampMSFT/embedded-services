@@ -2185,13 +2185,8 @@ dependencies = [
  "bitfield 0.17.0",
  "bytemuck",
  "defmt 0.3.100",
- "embassy-executor",
- "embassy-futures",
- "embassy-sync",
- "embassy-time",
  "embedded-mcu-hal",
  "embedded-services",
- "log",
  "num_enum",
 ]
 

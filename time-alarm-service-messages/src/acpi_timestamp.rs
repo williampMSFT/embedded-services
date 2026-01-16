@@ -28,8 +28,7 @@ struct RawAcpiTimestamp {
     // For _GRT, 0 = time is not valid (request failed), 1 = time is valid.  For _SRT, this is padding and should be 0.
     valid_or_padding: u8,
 
-    // Millseconds: 1-1000. Leap seconds are not supported.
-    // TODO [SPEC] The ACPI spec says 1-1000, but it seems like it should be 0-999? We may need to do some translation if this isn't just a typo in the spec.
+    // Millseconds: 0-999. Leap seconds are not supported.
     milliseconds: u16,
 
     // Time zone: -1440 to 1440 in minutes from UTC, or 2047 if unspecified
