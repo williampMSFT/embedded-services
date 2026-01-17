@@ -68,11 +68,11 @@ mod time_zone_data {
     }
 
     #[repr(C)]
-    #[derive(bytemuck::Pod, bytemuck::Zeroable, Copy, Clone, Debug)]
+    #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::Immutable, Copy, Clone, Debug)]
     struct RawTimeZoneData {
         tz: i16,
         dst: u8,
-        _padding: u8, // padding to make the struct 4 bytes
+        _padding: u8,
     }
 
     impl TimeZoneData {
@@ -89,7 +89,7 @@ mod time_zone_data {
                 _padding: 0,
             };
 
-            self.storage.write(bytemuck::cast(representation));
+            self.storage.write(zerocopy::transmute!(representation));
         }
 
         /// Retreives the current time zone / daylight savings time.
@@ -97,7 +97,7 @@ mod time_zone_data {
         /// (AcpiTimeZone::Unknown, AcpiDaylightSavingsTimeStatus::NotObserved).
         ///
         pub fn get_data(&self) -> (AcpiTimeZone, AcpiDaylightSavingsTimeStatus) {
-            let representation: RawTimeZoneData = bytemuck::cast(self.storage.read());
+            let representation: RawTimeZoneData = zerocopy::transmute!(self.storage.read());
             (|| -> Result<(AcpiTimeZone, AcpiDaylightSavingsTimeStatus), time_alarm_service_messages::AcpiTimeAlarmError> {
                 Ok((representation.tz.try_into()?, representation.dst.try_into()?))
             })()

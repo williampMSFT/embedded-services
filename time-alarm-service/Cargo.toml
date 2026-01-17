@@ -8,7 +8,6 @@ repository.workspace = true
 
 [dependencies]
 bitfield.workspace = true
-bytemuck.workspace = true
 defmt = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
 embassy-executor.workspace = true
@@ -18,6 +17,7 @@ embassy-time.workspace = true
 embedded-mcu-hal.workspace = true
 embedded-services.workspace = true
 time-alarm-service-messages.workspace = true
+zerocopy.workspace = true
 
 [features]
 defmt = [

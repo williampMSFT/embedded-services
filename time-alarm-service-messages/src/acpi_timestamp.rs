@@ -1,14 +1,14 @@
 use embedded_mcu_hal::time::{Datetime, Month, UncheckedDatetime};
 
 use crate::AcpiTimeAlarmError;
+use zerocopy::{FromBytes, I16, Immutable, IntoBytes, KnownLayout, LE, U16, Unaligned};
 
 // Timestamp structure as specified in the ACPI spec.  Must be exactly this layout.
-#[repr(C)]
-#[derive(bytemuck::Pod, bytemuck::Zeroable, Copy, Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(C, packed)]
+#[derive(FromBytes, IntoBytes, Immutable, KnownLayout, Unaligned, Copy, Clone, Debug)]
 struct RawAcpiTimestamp {
     // Year: 1900 - 9999
-    year: u16,
+    year: U16<LE>,
 
     // Month: 1 - 12
     month: u8,
@@ -29,10 +29,10 @@ struct RawAcpiTimestamp {
     valid_or_padding: u8,
 
     // Millseconds: 0-999. Leap seconds are not supported.
-    milliseconds: u16,
+    milliseconds: U16<LE>,
 
     // Time zone: -1440 to 1440 in minutes from UTC, or 2047 if unspecified
-    time_zone: i16,
+    time_zone: I16<LE>,
 
     // 1 = daylight savings time in effect, 0 = standard time
     daylight: u8,
@@ -41,29 +41,10 @@ struct RawAcpiTimestamp {
     _padding: [u8; 3],
 }
 
-impl RawAcpiTimestamp {
-    // Try to interpret a byte slice as an AcpiTimestamp.  The slice must be exactly 16 bytes long.
-    // Validity of the fields is not checked here.
-    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, AcpiTimeAlarmError> {
-        let bytes = bytes
-            .get(..core::mem::size_of::<Self>())
-            .ok_or(AcpiTimeAlarmError::UnspecifiedFailure)?;
-        // TODO investigate zerocopy
-        bytemuck::try_pod_read_unaligned(bytes).map_err(|_| AcpiTimeAlarmError::UnspecifiedFailure)
-    }
-
-    // Get a byte slice representing this AcpiTimestamp.
-    pub fn as_bytes(&self) -> &[u8; core::mem::size_of::<Self>()] /* 16 */ {
-        bytemuck::bytes_of(self)
-            .try_into()
-            .expect("Should never fail because we know the size of AcpiTimestamp at compile time")
-    }
-}
-
 impl From<&AcpiTimestamp> for RawAcpiTimestamp {
     fn from(ts: &AcpiTimestamp) -> Self {
         Self {
-            year: ts.datetime.year(),
+            year: ts.datetime.year().into(),
             month: ts.datetime.month().into(),
             day: ts.datetime.day(),
             hour: ts.datetime.hour(),
@@ -71,7 +52,7 @@ impl From<&AcpiTimestamp> for RawAcpiTimestamp {
             second: ts.datetime.second(),
             valid_or_padding: 1, // valid
             milliseconds: (ts.datetime.nanoseconds() / 1_000_000).try_into().expect("Datetime::nanoseconds() is capped at 10^9 and therefore should always divide by 10^6 into something that fits in u16"),
-            time_zone: ts.time_zone.into(),
+            time_zone: i16::from(ts.time_zone).into(),
             daylight: ts.dst_status.into(),
             _padding: [0; 3],
         }
@@ -160,24 +141,32 @@ pub struct AcpiTimestamp {
 }
 
 impl AcpiTimestamp {
-    pub fn as_bytes(&self) -> [u8; core::mem::size_of::<RawAcpiTimestamp>()] /* 16 */ {
-        *RawAcpiTimestamp::from(self).as_bytes()
+    pub(crate) fn as_bytes(&self) -> [u8; core::mem::size_of::<RawAcpiTimestamp>()] /* 16 */ {
+        RawAcpiTimestamp::from(self)
+            .as_bytes()
+            .try_into()
+            .expect("Size is guaranteed to be the size of RawAcpiTimestamp")
     }
 
-    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, AcpiTimeAlarmError> {
-        let raw = RawAcpiTimestamp::try_from_bytes(bytes)?;
+    pub(crate) fn try_from_bytes(bytes: &[u8]) -> Result<Self, AcpiTimeAlarmError> {
+        let raw = RawAcpiTimestamp::ref_from_bytes(
+            bytes
+                .get(..core::mem::size_of::<RawAcpiTimestamp>())
+                .ok_or(AcpiTimeAlarmError::UnspecifiedFailure)?,
+        )
+        .map_err(|_| AcpiTimeAlarmError::UnspecifiedFailure)?;
 
         Ok(Self {
             datetime: Datetime::new(UncheckedDatetime {
-                year: raw.year,
+                year: raw.year.get(),
                 month: Month::try_from(raw.month).map_err(|_| AcpiTimeAlarmError::UnspecifiedFailure)?,
                 day: raw.day,
                 hour: raw.hour,
                 minute: raw.minute,
                 second: raw.second,
-                nanosecond: (raw.milliseconds as u32) * 1_000_000,
+                nanosecond: (raw.milliseconds.get() as u32) * 1_000_000,
             })?,
-            time_zone: raw.time_zone.try_into()?,
+            time_zone: raw.time_zone.get().try_into()?,
             dst_status: raw.daylight.try_into()?,
         })
     }
