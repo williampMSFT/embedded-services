@@ -1,0 +1,24 @@
+[package]
+name = "battery-service-relay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+defmt = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
+embedded-services.workspace = true
+embedded-mcu-hal.workspace = true
+num_enum.workspace = true
+
+# TODO When we split the battery service into separate interface and implementation crates, this should only depend on the interface crate
+battery-service.workspace = true
+battery-service-messages.workspace = true
+
+[features]
+defmt = ["dep:defmt", "battery-service/defmt"]
+log = ["dep:log", "embedded-services/log"]
+
+[lints]
+workspace = true

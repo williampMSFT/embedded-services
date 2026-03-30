@@ -151,6 +151,11 @@ impl<'hw, const N: usize> Service<'hw, N> {
     pub async fn get_state(&self) -> context::State {
         self.inner.get_state().await
     }
+
+    /// Process an ACPI command and return the result. // TODO @matteo should we instead expose the primitives required for this as part of the interface and have the ACPI-ness of it be in the relay handler so it's reusable by other impls?
+    pub async fn process_acpi_cmd(&self, request: AcpiBatteryRequest) -> AcpiBatteryResult {
+        self.inner.context.process_acpi_cmd(&request).await
+    }
 }
 
 /// Errors that can occur during battery service initialization.
@@ -189,22 +194,6 @@ where
         }
 
         Ok((Self { inner: service }, Runner { service }))
-    }
-}
-
-impl<const N: usize> embedded_services::relay::mctp::RelayServiceHandlerTypes for Service<'_, N> {
-    type RequestType = AcpiBatteryRequest;
-    type ResultType = AcpiBatteryResult;
-}
-
-impl<const N: usize> embedded_services::relay::mctp::RelayServiceHandler for Service<'_, N> {
-    async fn process_request(&self, request: Self::RequestType) -> Self::ResultType {
-        trace!("Battery service: ACPI cmd recvd");
-        let response = self.inner.context.process_acpi_cmd(&request).await;
-        if let Err(e) = response {
-            error!("Battery service command failed: {:?}", e)
-        }
-        response
     }
 }
 
