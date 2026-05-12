@@ -17,7 +17,7 @@ pub mod buffer;
 pub mod comms;
 pub mod event;
 pub mod fmt;
-pub mod hid;
+// pub mod hid;// TODO restore before checkin?
 pub mod init;
 pub mod ipc;
 pub mod keyboard;

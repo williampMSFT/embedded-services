@@ -1,4 +1,5 @@
 //! I2C<->HID bridge
+// williamp I believe this module is the one that acts as the i2c slave and handles the connection to the host PC
 use core::borrow::{Borrow, BorrowMut};
 
 use embassy_sync::mutex::Mutex;
@@ -46,6 +47,7 @@ pub struct Host<B: I2cSlaveAsync> {
 }
 
 impl<B: I2cSlaveAsync> Host<B> {
+    // TODO I don't see an interrupt line here - how did this ever work?
     pub fn new(id: DeviceId, bus: B, buffer: OwnedRef<'static, u8>, timeout_config: Config) -> Self {
         Host {
             id,
@@ -57,35 +59,35 @@ impl<B: I2cSlaveAsync> Host<B> {
         }
     }
 
-    async fn read_bus(&self, timeout: Duration, buffer: &mut [u8]) -> Result<(), Error<B::Error>> {
-        let mut bus = self.bus.lock().await;
-        with_timeout(timeout, bus.respond_to_write(buffer))
-            .await
-            .map_err(|_| {
-                error!("Response timeout");
-                Error::Hid(hid::Error::Timeout)
-            })?
-            .map_err(|e| {
-                error!("Failed to read from bus");
-                Error::Bus(e)
-            })
-    }
+    // async fn read_bus(&self, timeout: Duration, buffer: &mut [u8]) -> Result<(), Error<B::Error>> {
+    //     let mut bus = self.bus.lock().await;
+    //     with_timeout(timeout, bus.respond_to_write(buffer))
+    //         .await
+    //         .map_err(|_| {
+    //             error!("Response timeout");
+    //             Error::Hid(hid::Error::Timeout)
+    //         })?
+    //         .map_err(|e| {
+    //             error!("Failed to read from bus");
+    //             Error::Bus(e)
+    //         })
+    // }
 
-    async fn write_bus(&self, timeout: Duration, buffer: &[u8]) -> Result<(), Error<B::Error>> {
-        let mut bus = self.bus.lock().await;
-        // Send response, timeout if the host doesn't read so we don't get stuck here
-        trace!("Sending {} bytes", buffer.len());
-        with_timeout(timeout, bus.respond_to_read(buffer))
-            .await
-            .map_err(|_| {
-                error!("Response timeout");
-                Error::Hid(hid::Error::Timeout)
-            })?
-            .map_err(|e| {
-                error!("Failed to write to bus");
-                Error::Bus(e)
-            })
-    }
+    // async fn write_bus(&self, timeout: Duration, buffer: &[u8]) -> Result<(), Error<B::Error>> {
+    //     let mut bus = self.bus.lock().await;
+    //     // Send response, timeout if the host doesn't read so we don't get stuck here
+    //     trace!("Sending {} bytes", buffer.len());
+    //     with_timeout(timeout, bus.respond_to_read(buffer))
+    //         .await
+    //         .map_err(|_| {
+    //             error!("Response timeout");
+    //             Error::Hid(hid::Error::Timeout)
+    //         })?
+    //         .map_err(|e| {
+    //             error!("Failed to write to bus");
+    //             Error::Bus(e)
+    //         })
+    // }
 
     async fn process_output_report(&self) -> Result<hid::Request<'static>, Error<B::Error>> {
         let mut borrow = self.buffer.borrow_mut().map_err(Error::Buffer)?;
@@ -300,13 +302,6 @@ impl<B: I2cSlaveAsync> Host<B> {
         }
     }
 
-    pub async fn process_request(&self, access: Access) -> Result<(), Error<B::Error>> {
-        match access {
-            Access::Read => self.process_read().await,
-            Access::Write => self.process_register_access().await,
-        }
-    }
-
     pub async fn send_response(&self) -> Result<(), Error<B::Error>> {
         if let Some(response) = self.response.wait().await {
             match response {
@@ -368,29 +363,31 @@ impl<B: I2cSlaveAsync> Host<B> {
     }
 
     pub async fn process(&self) -> Result<(), Error<B::Error>> {
-        let access = self.wait_request().await?;
-        self.process_request(access).await?;
+        match self.wait_request().await? {
+            Access::Read => self.process_read().await,
+            Access::Write => self.process_register_access().await,
+        }
         self.send_response().await
     }
 }
 
-impl<B: I2cSlaveAsync> MailboxDelegate for Host<B> {
-    fn receive(&self, message: &comms::Message) -> Result<(), comms::MailboxDelegateError> {
-        let hid_msg = message
-            .data
-            .get::<hid::Message>()
-            .ok_or(comms::MailboxDelegateError::MessageNotFound)?;
+// impl<B: I2cSlaveAsync> MailboxDelegate for Host<B> {
+//     fn receive(&self, message: &comms::Message) -> Result<(), comms::MailboxDelegateError> {
+//         let hid_msg = message
+//             .data
+//             .get::<hid::Message>()
+//             .ok_or(comms::MailboxDelegateError::MessageNotFound)?;
 
-        match hid_msg.data {
-            hid::MessageData::Response(ref response) => {
-                self.response.signal(response.clone());
-                Ok(())
-            }
-            _ if message.to != EndpointID::External(External::Host) => {
-                Err(comms::MailboxDelegateError::InvalidDestination)
-            }
-            _ if hid_msg.id != self.id => Err(comms::MailboxDelegateError::InvalidData),
-            _ => Err(comms::MailboxDelegateError::Other),
-        }
-    }
-}
+//         match hid_msg.data {
+//             hid::MessageData::Response(ref response) => {
+//                 self.response.signal(response.clone());
+//                 Ok(())
+//             }
+//             _ if message.to != EndpointID::External(External::Host) => {
+//                 Err(comms::MailboxDelegateError::InvalidDestination)
+//             }
+//             _ if hid_msg.id != self.id => Err(comms::MailboxDelegateError::InvalidData),
+//             _ => Err(comms::MailboxDelegateError::Other),
+//         }
+//     }
+// }

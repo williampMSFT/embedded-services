@@ -1,3 +1,4 @@
+// williamp: I think this module is the one that acts as the i2c master and handles the downstream passthrough device (touchpad or whatever)
 use core::borrow::BorrowMut;
 
 use embassy_sync::mutex::Mutex;

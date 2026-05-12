@@ -1,0 +1,87 @@
+use embedded_services::relay::hid;
+use hid::HidReport;
+use typenum::marker_traits::Unsigned;
+
+// TODO comments are currently taken directly from spec, clean up wording based on types (e.g. we know it's unsigned, it's a u16...)
+/// HID descriptor
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::Immutable)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct DeviceDescriptor {
+    /// The length, in unsigned bytes, of the complete Hid Descriptor
+    w_hid_desc_length: u16,
+
+    /// The version number, in binary coded decimal (BCD) format. DEVICE should default to 0x0100
+    bcd_version: u16,
+
+    /// The length, in unsigned bytes, of the Report Descriptor.
+    w_report_desc_length: u16,
+
+    /// The register index containing the Report Descriptor on the DEVICE.
+    w_report_desc_register: u16,
+
+    /// This field identifies, in unsigned bytes, the register number to read the input report from the DEVICE.
+    w_input_register: u16,
+
+    /// This field identifies in unsigned bytes the length of the largest Input Report to be read from the Input Register (Complex HID Devices will need various sized reports).
+    w_max_input_length: u16,
+
+    /// This field identifies, in unsigned bytes, the register number to send the output report to the DEVICE.
+    w_output_register: u16,
+
+    /// This field identifies in unsigned bytes the length of the largest output Report to be sent to the Output Register (Complex HID Devices will need various sized reports).
+    w_max_output_length: u16,
+
+    /// This field identifies, in unsigned bytes, the register number to send command requests to the DEVICE
+    w_command_register: u16,
+
+    /// This field identifies in unsigned bytes the register number to exchange data with the Command Request
+    w_data_register: u16,
+
+    /// This field identifies the DEVICE manufacturers Vendor ID. Must be non-zero.
+    w_vendor_id: u16,
+
+    /// This field identifies the DEVICE’s unique model / Product ID.
+    w_product_id: u16,
+
+    /// This field identifies the DEVICE’s firmware revision number.
+    w_version_id: u16,
+
+    /// This field is reserved and should be set to 0.
+    reserved: [u8; 4],
+}
+
+pub struct VendorId(pub u16); // TODO can't be 0
+pub struct ProductId(pub u16);
+pub struct VersionId(pub u16);
+
+impl DeviceDescriptor {
+    // TODO this thing seems like it should be partially generatable from a report descriptor (max sizes)? maybe we make some of these private and consume them that way
+    pub fn new<HidDevice: hid::HidDevice>(
+        hid_device: &HidDevice,
+        w_vendor_id: VendorId,
+        w_product_id: ProductId,
+        w_version_id: VersionId,
+    ) -> Self {
+        // TODO validate the following:
+        // - Vendor ID is nonzero
+        // - Command registers are unique
+        const HID_I2C_PROTOCOL_VERSION: u16 = 0x0100;
+        Self {
+            w_hid_desc_length: core::mem::size_of::<DeviceDescriptor>() as u16,
+            bcd_version: HID_I2C_PROTOCOL_VERSION,
+            w_report_desc_length: hid_device.report_descriptor().as_bytes().len() as u16,
+            w_report_desc_register: crate::HidI2cRegister::ReportDescriptor as u16,
+            w_input_register: crate::HidI2cRegister::Input.into(),
+            w_max_input_length: HidDevice::InputReportMaxSize::USIZE as u16, // TODO figure out if this is the right place to assert that the descriptor matches the constants; also, maybe this should come from the dynamic descriptor?
+            w_output_register: crate::HidI2cRegister::Output.into(),
+            w_max_output_length: HidDevice::OutputReportMaxSize::USIZE as u16, // TODO figure out if this is the right place to assert that the descriptor matches the constants; also, maybe this should come from the dynamic descriptor?
+            w_command_register: crate::HidI2cRegister::Command.into(),
+            w_data_register: crate::HidI2cRegister::Data.into(),
+            w_vendor_id: w_vendor_id.0,
+            w_product_id: w_product_id.0,
+            w_version_id: w_version_id.0,
+            reserved: [0; 4],
+        }
+    }
+}

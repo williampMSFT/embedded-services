@@ -33,7 +33,8 @@ embassy-imxrt = { git = "https://github.com/OpenDevicePartnership/embassy-imxrt"
 ] }
 
 embassy-embedded-hal = { version = "0.6.0", features = ["defmt"] }
-
+embedded-hal = "1.0"
+embedded-hal-async = "1.0"
 embassy-sync = { version = "0.8", features = ["defmt"] }
 embassy-executor = { version = "0.10.0", features = [
     "platform-cortex-m",
@@ -87,6 +88,12 @@ embedded-mcu-hal = "0.3.0"
 
 cfu-service = { path = "../../cfu-service", features = ["defmt"] }
 
+hid-i2c-service = { path = "../../hidi2c-target-service", features = ["defmt"] }
+
 # Needed otherwise cargo will pull from git
 [patch."https://github.com/OpenDevicePartnership/embedded-services"]
 embedded-services = { path = "../../embedded-service" }
+
+# TODO revert before checkin
+[patch.crates-io]
+embedded-mcu-hal = { path = "../../../embedded-mcu/embedded-mcu-hal" }
