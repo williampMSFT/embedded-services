@@ -448,7 +448,7 @@ dependencies = [
 [[package]]
 name = "embassy-imxrt"
 version = "0.1.0"
-source = "git+https://github.com/OpenDevicePartnership/embassy-imxrt#8b9a6f0e11d9b65f1616a9e487af2cf04aef3584"
+source = "git+https://github.com/felipebalbi/embassy-imxrt.git?branch=i2c-slave-trait#8a95cb301290b27adae62b0fc37c133958014382"
 dependencies = [
  "cfg-if",
  "cortex-m",
@@ -669,10 +669,13 @@ dependencies = [
  "defmt 0.3.100",
  "embassy-futures",
  "embassy-sync",
+ "generic-array",
+ "heapless 0.9.3",
  "mctp-rs",
  "paste",
  "portable-atomic",
  "serde",
+ "typenum",
 ]
 
 [[package]]
@@ -775,6 +778,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "generic-array"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb130435a959a8d525e6bca66ff6c40981a300ee96d70e3ef56f046556d614a3"
+dependencies = [
+ "rustversion",
+ "typenum",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -819,6 +832,24 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "hid-i2c-service"
+version = "0.1.0"
+dependencies = [
+ "defmt 0.3.100",
+ "embassy-futures",
+ "embassy-time",
+ "embedded-hal 1.0.0",
+ "embedded-mcu-hal",
+ "embedded-services",
+ "generic-array",
+ "heapless 0.9.3",
+ "num_enum",
+ "odp-service-common",
+ "typenum",
+ "zerocopy",
+]
 
 [[package]]
 name = "ident_case"
@@ -1205,9 +1236,12 @@ dependencies = [
  "embassy-sync",
  "embassy-time",
  "embedded-cfu-protocol",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
  "embedded-mcu-hal",
  "embedded-services",
  "embedded-usb-pd",
+ "hid-i2c-service",
  "mimxrt600-fcb 0.1.0",
  "odp-service-common",
  "panic-probe",
@@ -1435,10 +1469,12 @@ name = "time-alarm-service-relay"
 version = "0.1.0"
 dependencies = [
  "defmt 0.3.100",
+ "embassy-sync",
  "embedded-mcu-hal",
  "embedded-services",
  "num_enum",
  "time-alarm-service-interface",
+ "typenum",
 ]
 
 [[package]]

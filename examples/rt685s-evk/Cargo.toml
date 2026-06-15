@@ -94,6 +94,5 @@ hid-i2c-service = { path = "../../hidi2c-target-service", features = ["defmt"] }
 [patch."https://github.com/OpenDevicePartnership/embedded-services"]
 embedded-services = { path = "../../embedded-service" }
 
-# TODO revert before checkin
-[patch.crates-io]
-embedded-mcu-hal = { path = "../../../embedded-mcu/embedded-mcu-hal" }
+[patch."https://github.com/OpenDevicePartnership/embassy-imxrt"] # TODO remove when https://github.com/OpenDevicePartnership/embassy-imxrt/pull/565 goes in
+embassy-imxrt = { git = "https://github.com/felipebalbi/embassy-imxrt.git", branch = "i2c-slave-trait" }

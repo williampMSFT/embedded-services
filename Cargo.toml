@@ -125,5 +125,5 @@ tokio = { version = "1.42.0" }
 uuid = { version = "=1.17.0", default-features = false }
 zerocopy = "0.8"
 
-[patch.crates-io]
-embedded-mcu-hal = { path = "../embedded-mcu/embedded-mcu-hal" }
+[patch."https://github.com/OpenDevicePartnership/embassy-imxrt"] # TODO remove when https://github.com/OpenDevicePartnership/embassy-imxrt/pull/565 goes in
+embassy-imxrt = { git = "https://github.com/felipebalbi/embassy-imxrt.git", branch = "i2c-slave-trait" }

@@ -532,7 +532,7 @@ dependencies = [
 [[package]]
 name = "embassy-imxrt"
 version = "0.1.0"
-source = "git+https://github.com/OpenDevicePartnership/embassy-imxrt#8b9a6f0e11d9b65f1616a9e487af2cf04aef3584"
+source = "git+https://github.com/felipebalbi/embassy-imxrt.git?branch=i2c-slave-trait#8a95cb301290b27adae62b0fc37c133958014382"
 dependencies = [
  "cfg-if",
  "cortex-m",
@@ -2294,7 +2294,3 @@ dependencies = [
  "quote",
  "syn",
 ]
-
-[[patch.unused]]
-name = "embedded-mcu-hal"
-version = "0.2.0"

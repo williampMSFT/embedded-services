@@ -76,14 +76,14 @@ async fn main(spawner: embassy_executor::Spawner) {
     let time_service = odp_service_common::spawn_service!(
         spawner,
         TimeAlarmServiceType,
-        time_alarm_service::InitParams {
-            backing_clock: dt_clock,
-            tz_storage: tz,
-            ac_expiration_storage: ac_expiration,
-            ac_policy_storage: ac_policy,
-            dc_expiration_storage: dc_expiration,
-            dc_policy_storage: dc_policy
-        }
+        |resources| TimeAlarmServiceType::new(resources, 
+            dt_clock,
+            tz,
+            ac_expiration,
+            ac_policy,
+            dc_expiration,
+            dc_policy
+        )
     )
     .expect("Failed to spawn time alarm service");
 
@@ -119,16 +119,17 @@ async fn main(spawner: embassy_executor::Spawner) {
     let hidi2csvc = odp_service_common::spawn_service!(
         spawner,
         hid_i2c_service::Service<'static, StubI2cTarget, StubOutputPin, TimeAlarmHidRelay<TimeAlarmServiceType, embassy_sync::blocking_mutex::raw::NoopRawMutex>>,
-        hid_i2c_service::InitParams {
-            bus: StubI2cTarget{},
-            attn_pin: StubOutputPin{},
-            hid_device: hid_tad_handler,
-            vendor_id: VendorId(0x1234), // TODO pick a real vendor ID
-            product_id: ProductId(0x5678), // TODO pick a real product ID
-            version_id: VersionId(0x0001), // TODO pick a real version number
-            device_response_timeout: embassy_time::Duration::from_secs(1), // TODO figure out what a reasonable timeout is here
-            data_read_timeout: embassy_time::Duration::from_secs(1), // TODO figure out what a reasonable timeout is here
-        }
+        |resources| hid_i2c_service::Service::new(resources, 
+            hid_i2c_service::InitParams {
+                bus: StubI2cTarget{},
+                attn_pin: StubOutputPin{},
+                hid_device: hid_tad_handler,
+                vendor_id: VendorId(0x1234), // TODO pick a real vendor ID
+                product_id: ProductId(0x5678), // TODO pick a real product ID
+                version_id: VersionId(0x0001), // TODO pick a real version number
+                device_response_timeout: embassy_time::Duration::from_secs(1), // TODO figure out what a reasonable timeout is here
+                data_read_timeout: embassy_time::Duration::from_secs(1), // TODO figure out what a reasonable timeout is here
+            })
     );
 
     loop {

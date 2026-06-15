@@ -697,7 +697,7 @@ impl<
     HidDevice: ConstrainedHidDevice + 'hw,
 > Service<'hw, Bus, AttnPin, HidDevice>
 {
-    async fn new(
+    pub async fn new(
         storage: &'hw mut Resources<Bus, AttnPin, HidDevice>,
         params: InitParams<Bus, AttnPin, HidDevice>,
         // TODO this is probably not supposed to be infallible
