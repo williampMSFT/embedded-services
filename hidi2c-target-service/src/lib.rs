@@ -695,17 +695,13 @@ impl<
     Bus: I2cTargetAsync + 'hw,
     AttnPin: embedded_hal::digital::OutputPin + 'hw,
     HidDevice: ConstrainedHidDevice + 'hw,
-> odp_service_common::runnable_service::Service<'hw> for Service<'hw, Bus, AttnPin, HidDevice>
+> Service<'hw, Bus, AttnPin, HidDevice>
 {
-    type Runner = Runner<'hw, Bus, AttnPin, HidDevice>;
-    type Resources = Resources<Bus, AttnPin, HidDevice>;
-    type InitParams = InitParams<Bus, AttnPin, HidDevice>;
-    type ErrorType = core::convert::Infallible; // TODO figure out what this should really be
-
     async fn new(
-        storage: &'hw mut Self::Resources,
-        params: Self::InitParams,
-    ) -> Result<(Self, Self::Runner), Self::ErrorType> {
+        storage: &'hw mut Resources<Bus, AttnPin, HidDevice>,
+        params: InitParams<Bus, AttnPin, HidDevice>,
+        // TODO this is probably not supposed to be infallible
+    ) -> Result<(Self, Runner<'hw, Bus, AttnPin, HidDevice>), core::convert::Infallible> {
         let device_descriptor = DeviceDescriptor::new(
             &params.hid_device,
             params.vendor_id,
@@ -739,6 +735,19 @@ impl<
     }
 }
 
+
+impl<
+    'hw,
+    Bus: I2cTargetAsync + 'hw,
+    AttnPin: embedded_hal::digital::OutputPin + 'hw,
+    HidDevice: ConstrainedHidDevice + 'hw,
+> odp_service_common::runnable_service::Service<'hw> for Service<'hw, Bus, AttnPin, HidDevice>
+{
+    type Runner = Runner<'hw, Bus, AttnPin, HidDevice>;
+    type Resources = Resources<Bus, AttnPin, HidDevice>;
+}
+
+// TODO probably get rid of this and just use params directly, maybe struct some of these that are defaultable
 pub struct InitParams<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice> {
     pub bus: Bus,
     pub attn_pin: AttnPin,
