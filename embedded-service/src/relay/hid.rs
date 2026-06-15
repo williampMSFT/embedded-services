@@ -98,11 +98,11 @@ pub trait ReportReceiver<MaxSize: ArrayLength> {
 impl<'ch, M: embassy_sync::blocking_mutex::raw::RawMutex, MaxSize: ArrayLength, const N: usize> ReportReceiver<MaxSize>
     for embassy_sync::channel::Receiver<'ch, M, HidResult<HidReport<MaxSize>>, N>
 {
-    async fn ready_to_receive(&self) -> () {
-        self.ready_to_receive().await
+    fn ready_to_receive(&self) -> impl Future<Output = ()> {
+        self.ready_to_receive()
     }
-    async fn receive(&self) -> HidResult<HidReport<MaxSize>> {
-        self.receive().await // TODO figure out if there's a way to do this without an .await since I think you end up double-awaiting
+    fn receive(&self) -> impl Future<Output = HidResult<HidReport<MaxSize>>> {
+        self.receive()
     }
     fn is_empty(&self) -> bool {
         self.is_empty()
@@ -172,6 +172,11 @@ pub trait HidDevice {
 
     /// This is for 'unsolicited' reports - user is responsible for polling this and sending it up.
     fn receiver(&mut self) -> Self::ReportReceiver<'_>;
+
+    // TODO - what if we changed this to be fn wait_for_input_report(&mut self) and get_unsolicited_report(&mut self) -> HidResult<Self::InputReport> ?? I think this lets us dodge a copy in the case where we're doing passthrough because we won't need to copy between queues?  Although - does this actually buy us anything, or do we get what we want by using a non-Channel receiver implementation in the macro?
+    // // Blocks until the device has an unsolicited input report that it wants to send to the host.
+    // async fn wait_for_input_report(&mut self) -> HidResult<()>;
+    // async fn get_input_report(&mut self) -> HidResult<Self::InputReport>;
 
     /// Called when the host commands a particular power state.
     async fn set_power_state(&mut self, state: HidDevicePowerState) -> HidResult<()>;
