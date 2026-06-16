@@ -93,6 +93,7 @@ embedded-mcu-hal = "0.3.0"
 
 cfu-service = { path = "../../cfu-service", features = ["defmt"] }
 zerocopy = "0.8"
+generic-array = "1.4.1"
 
 
 # Needed otherwise cargo will pull from git

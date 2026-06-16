@@ -1241,6 +1241,7 @@ dependencies = [
  "embedded-mcu-hal",
  "embedded-services",
  "embedded-usb-pd",
+ "generic-array",
  "hidi2c-target-service",
  "mimxrt600-fcb 0.1.0",
  "odp-service-common",

@@ -409,7 +409,8 @@ impl<
         {
             HidI2cRegister::DeviceDescriptor => {
                 // TODO do we need to handle the case where the host decides to talk to someone else in the middle of talking to us?
-                match Self::listen_bus(&mut self.resources.bus, self.resources.device_response_timeout).await? {
+                let request = Self::listen_bus(&mut self.resources.bus, self.resources.device_response_timeout).await?;
+                match request {
                     Request::Read(_address) => {
                         Self::write_bus(
                             &mut self.resources.bus,
@@ -420,7 +421,7 @@ impl<
                         Ok(())
                     }
                     _ => {
-                        error!("Expected read request after device descriptor register access");
+                        error!("Expected read request after device descriptor register access: {:?}", request);
                         Err(Error::Hid(HidError::InvalidRegisterAddress))
                     }
                 }

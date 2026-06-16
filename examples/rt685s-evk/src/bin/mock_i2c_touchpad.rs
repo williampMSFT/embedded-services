@@ -60,10 +60,6 @@ struct MouseReport {
 }
 
 
-bind_interrupts!(struct Irqs {
-    FLEXCOMM2 => i2c::InterruptHandler<peripherals::FLEXCOMM2>;
-});
-
 struct MockTouchpadService {
     // Signal a click
     channel: embassy_sync::channel::Channel<embedded_services::GlobalRawMutex, MouseReport, 3>,
@@ -83,10 +79,30 @@ impl MockTouchpadService {
     }
 }
 
+// TODO if this pattern is going to be common, maybe write a generic struct to do it
+struct TouchpadNotificationHidReceiver<'a> {
+    receiver: embassy_sync::channel::Receiver<'a, embedded_services::GlobalRawMutex, MouseReport, 3>,
+}
+
+impl<'a, MaxSize: generic_array::ArrayLength> ReportReceiver<MaxSize> for TouchpadNotificationHidReceiver<'a> {
+    async fn ready_to_receive(&self) {
+        self.receiver.ready_to_receive().await
+    }
+
+    async fn receive(&self) -> HidResult<HidReport<MaxSize>> {
+        let report = self.receiver.receive().await;
+        let hid_report = HidReport::new(ReportId(REPORTID_MOUSE), report.as_bytes()).unwrap();
+        HidResult::Ok(hid_report)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.receiver.is_empty()
+    }
+}
+
 struct MockTouchpadHidRelay<'s> {
     service: &'s MockTouchpadService,
     descriptor: HidReportDescriptor,
-    channel: embassy_sync::channel::Channel<embedded_services::GlobalRawMutex, HidResult<HidReport<<Self as embedded_services::relay::hid::HidDevice>::InputReportMaxSize>>, 3>, // TODO figure out the right size for this buffer
 }
 
 impl<'s> MockTouchpadHidRelay<'s> {
@@ -94,7 +110,6 @@ impl<'s> MockTouchpadHidRelay<'s> {
         Self {
             service,
             descriptor: HidReportDescriptor::new_static(MOUSE_HID_REPORT_DESCRIPTOR),
-            channel: embassy_sync::channel::Channel::new(),
         }
     }
 }
@@ -105,12 +120,7 @@ impl embedded_services::relay::hid::HidDevice for MockTouchpadHidRelay<'_> {
     type FeatureReportMaxSize = typenum::U0; // TODO figure out real number
 
     /// The type that will surface HID reports as they become available.
-    type ReportReceiver<'a> = embassy_sync::channel::Receiver<
-        'a,
-        embedded_services::GlobalRawMutex,
-        HidResult<HidReport<Self::InputReportMaxSize>>,
-        3,
-    > where Self: 'a;
+    type ReportReceiver<'a> = TouchpadNotificationHidReceiver<'a > where Self: 'a;
 
     const MAX_REPORT_COUNT: u8 = 10; // TODO figure out real number
 
@@ -151,7 +161,7 @@ impl embedded_services::relay::hid::HidDevice for MockTouchpadHidRelay<'_> {
     }
 
     fn receiver(&mut self) -> Self::ReportReceiver<'_> {
-        self.channel.receiver() // TODO need to have a thread to consume from the actual service and pass through to this channel, or implement a consumer/editor
+        TouchpadNotificationHidReceiver{receiver: self.service.receiver()} // TODO need to have a thread to consume from the actual service and pass through to this channel, or implement a consumer/editor
     }
 
     async fn set_power_state(&mut self, state: HidDevicePowerState) -> HidResult<()> {
@@ -163,6 +173,11 @@ impl embedded_services::relay::hid::HidDevice for MockTouchpadHidRelay<'_> {
         info!("Received reset command");
     }
 }
+
+
+bind_interrupts!(struct Irqs {
+    FLEXCOMM2 => i2c::InterruptHandler<peripherals::FLEXCOMM2>;
+});
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -239,7 +254,7 @@ async fn main(spawner: Spawner) {
 
 
 
-/// Below is an attempt at using the touchpad HID descriptor provided on the hardware integration site. TBD if it's necessary for this demo - it's a lot more complicated than I'd like...
+// Below is an attempt at using the touchpad HID descriptor provided on the hardware integration site. TBD if it's necessary for this demo - it's a lot more complicated than I'd like...
 
 
 
