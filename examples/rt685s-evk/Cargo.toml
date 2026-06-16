@@ -51,6 +51,10 @@ mimxrt600-fcb = "0.1.0"
 
 embedded-cfu-protocol = { git = "https://github.com/OpenDevicePartnership/embedded-cfu" }
 embedded-services = { path = "../../embedded-service", features = ["defmt"] }
+hidi2c-target-service = { path = "../../hidi2c-target-service", features = [
+    "defmt",
+] }
+
 odp-service-common = { path = "../../odp-service-common" }
 power-button-service = { path = "../../power-button-service", features = [
     "defmt",
@@ -77,6 +81,7 @@ time-alarm-service-interface = { path = "../../time-alarm-service-interface", fe
 time-alarm-service-relay = { path = "../../time-alarm-service-relay", features = [
     "defmt",
 ] }
+typenum = "1.20"
 
 static_cell = "2.1.0"
 
@@ -87,8 +92,8 @@ platform-service = { path = "../../platform-service", features = [
 embedded-mcu-hal = "0.3.0"
 
 cfu-service = { path = "../../cfu-service", features = ["defmt"] }
+zerocopy = "0.8"
 
-hid-i2c-service = { path = "../../hidi2c-target-service", features = ["defmt"] }
 
 # Needed otherwise cargo will pull from git
 [patch."https://github.com/OpenDevicePartnership/embedded-services"]

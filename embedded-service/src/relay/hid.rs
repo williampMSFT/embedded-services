@@ -21,6 +21,8 @@ pub enum HidResult<T> {
 }
 
 /// Power states that the host can command a HID device to be put into.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))] // TODO add default impls to all the other types in here
 pub enum HidDevicePowerState {
     On,    // Normal operation
     Sleep, // Reduced power state, but a device that sends a report in this state can wake the host - quiesce messages if you don't want to do that
@@ -86,7 +88,7 @@ impl<InputMaxSize: ArrayLength, FeatureMaxSize: ArrayLength> GetHidReport<InputM
 
 /// HID report ID
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-// #[cfg_attr(feature = "defmt", derive(defmt::Format))]// TODO do this
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReportId(pub u8);
 
 pub trait ReportReceiver<MaxSize: ArrayLength> {

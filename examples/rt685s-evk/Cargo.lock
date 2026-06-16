@@ -834,7 +834,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
-name = "hid-i2c-service"
+name = "hidi2c-target-service"
 version = "0.1.0"
 dependencies = [
  "defmt 0.3.100",
@@ -1241,7 +1241,7 @@ dependencies = [
  "embedded-mcu-hal",
  "embedded-services",
  "embedded-usb-pd",
- "hid-i2c-service",
+ "hidi2c-target-service",
  "mimxrt600-fcb 0.1.0",
  "odp-service-common",
  "panic-probe",
@@ -1256,6 +1256,8 @@ dependencies = [
  "tps6699x",
  "type-c-interface",
  "type-c-service",
+ "typenum",
+ "zerocopy",
 ]
 
 [[package]]

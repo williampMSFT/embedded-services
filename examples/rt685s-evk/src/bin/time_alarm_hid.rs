@@ -88,7 +88,7 @@ async fn main(spawner: embassy_executor::Spawner) {
     .expect("Failed to spawn time alarm service");
 
     use time_alarm_service_relay::hid::{TimeAlarmHidRelay};
-    use hid_i2c_service::*;
+    use hidi2c_target_service::*;
 
     let hid_tad_handler = time_alarm_service_relay::hid::TimeAlarmHidRelay::new(time_service);
 
@@ -118,9 +118,9 @@ async fn main(spawner: embassy_executor::Spawner) {
 
     let hidi2csvc = odp_service_common::spawn_service!(
         spawner,
-        hid_i2c_service::Service<'static, StubI2cTarget, StubOutputPin, TimeAlarmHidRelay<TimeAlarmServiceType, embassy_sync::blocking_mutex::raw::NoopRawMutex>>,
-        |resources| hid_i2c_service::Service::new(resources, 
-            hid_i2c_service::InitParams {
+        hidi2c_target_service::Service<'static, StubI2cTarget, StubOutputPin, TimeAlarmHidRelay<TimeAlarmServiceType, embassy_sync::blocking_mutex::raw::NoopRawMutex>>,
+        |resources| hidi2c_target_service::Service::new(resources, 
+            hidi2c_target_service::InitParams {
                 bus: StubI2cTarget{},
                 attn_pin: StubOutputPin{},
                 hid_device: hid_tad_handler,

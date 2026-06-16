@@ -1,5 +1,5 @@
 [package]
-name = "hid-i2c-service"
+name = "hidi2c-target-service"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
