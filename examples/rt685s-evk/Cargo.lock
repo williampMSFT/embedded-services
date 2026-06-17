@@ -448,7 +448,7 @@ dependencies = [
 [[package]]
 name = "embassy-imxrt"
 version = "0.1.0"
-source = "git+https://github.com/felipebalbi/embassy-imxrt.git?branch=i2c-slave-trait#8a95cb301290b27adae62b0fc37c133958014382"
+source = "git+https://github.com/felipebalbi/embassy-imxrt.git?branch=i2c-slave-trait#743b11501f06ceaf7b528d4531048cd5b73050d9"
 dependencies = [
  "cfg-if",
  "cortex-m",
