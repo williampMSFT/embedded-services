@@ -61,7 +61,6 @@ struct MouseReport {
     y: i8,
 }
 
-
 struct MockTouchpadService {
     // Signal a click
     channel: embassy_sync::channel::Channel<embedded_services::GlobalRawMutex, MouseReport, 3>,
@@ -77,6 +76,18 @@ impl MockTouchpadService {
 
         if let Err(e) = send_result {
             warn!("Failed to send click report: {:?}", e);
+        }
+    }
+
+    pub fn move_mouse(&self) {
+        let send_result = self.channel.try_send(MouseReport {
+            buttons: MOUSE_BUTTON_1,
+            x: 10,
+            y: 10,
+        });
+
+        if let Err(e) = send_result {
+            warn!("Failed to send mouse move report: {:?}", e);
         }
     }
 
@@ -121,7 +132,7 @@ impl<'s> MockTouchpadHidRelay<'s> {
 }
 
 impl embedded_services::relay::hid::HidDevice for MockTouchpadHidRelay<'_> {
-    type InputReportMaxSize = typenum::U4; // TODO figure out real number
+    type InputReportMaxSize = typenum::U3; // TODO figure out real number
     type OutputReportMaxSize = typenum::U0; // TODO figure out real number
     type FeatureReportMaxSize = typenum::U0; // TODO figure out real number
 
@@ -196,8 +207,8 @@ async fn main(spawner: Spawner) {
     use embassy_imxrt::gpio;
     let mut interrupt_pin = gpio::Output::new(
         p.PIO0_28,
-        gpio::Level::Low,
-        gpio::DriveMode::PushPull, // TODO I'm not confident this is correct; figure out what the right settings are for the interrupt line
+        gpio::Level::High,
+        gpio::DriveMode::OpenDrain, // TODO I'm not confident this is correct; figure out what the right settings are for the interrupt line
         gpio::DriveStrength::Normal,
         gpio::SlewRate::Standard,
     );
@@ -250,7 +261,7 @@ async fn main(spawner: Spawner) {
     );
 
     loop {
-        embassy_time::Timer::after(embassy_time::Duration::from_secs(5)).await;
+        embassy_time::Timer::after(embassy_time::Duration::from_millis(2000)).await;
         info!("clicking touchpad");
         touchpad_service.send_click();
     }

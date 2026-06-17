@@ -39,10 +39,14 @@ pub struct HidReport<MaxSize: ArrayLength> {
 
 impl<MaxSize: ArrayLength> HidReport<MaxSize> {
     // TODO come up with a better error type for failure here
-    pub fn new(id: ReportId, data: &[u8]) -> Result<Self, ()> {
+    pub fn new(id: ReportId, data: &[u8]) -> Result<Self, generic_array::LengthError> {
         Ok(Self {
             id,
-            data: GenericArray::try_from_slice(data).map_err(|_| ())?.clone(),
+            data: {
+                let mut result = GenericArray::default();
+                result.get_mut(..data.len()).ok_or(generic_array::LengthError)?.copy_from_slice(data);
+                result
+            },
             valid_bytes: data.len(),
         })
     }

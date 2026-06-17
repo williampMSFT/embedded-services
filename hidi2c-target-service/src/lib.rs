@@ -256,30 +256,34 @@ impl<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: 
     }
 }
 
+
+// TODO should this be a trait or something, or do we want to require open-drain active low?
 struct AttnPinHandler<AttnPin: embedded_hal::digital::OutputPin> {
     attn_pin: AttnPin,
-    high: bool
+    asserted: bool
 }
 
 impl<AttnPin: embedded_hal::digital::OutputPin> AttnPinHandler<AttnPin> {
     fn new(attn_pin: AttnPin) -> Self {
-        Self { attn_pin, high: false}
+        let mut result = Self { attn_pin, asserted: false};
+        result.clear_interrupt();
+        result
     }
 
-    fn set_low(&mut self) -> Result<(), AttnPin::Error> {
-        trace!("ATTN: set low");
-        self.high = false;
-        self.attn_pin.set_low()
-    }
-
-    fn set_high(&mut self) -> Result<(), AttnPin::Error> {
-        trace!("ATTN: set high");
-        self.high = true;
+    fn clear_interrupt(&mut self) -> Result<(), AttnPin::Error> {
+        trace!("ATTN: clear interrupt");
+        self.asserted = false;
         self.attn_pin.set_high()
     }
 
-    fn is_high(&self) -> bool {
-        self.high
+    fn assert_interrupt(&mut self) -> Result<(), AttnPin::Error> {
+        trace!("ATTN: assert interrupt");
+        self.asserted = true;
+        self.attn_pin.set_low()
+    }
+
+    fn asserted(&self) -> bool {
+        self.asserted
     }
 }
 
@@ -320,7 +324,7 @@ impl<
                 let listen_future = self.resources.bus.listen();
                 // If we've raised the interrupt, we know it won't go down again until it's serviced, so we don't need to
                 // wait for it
-                if self.resources.attn_pin.is_high() {
+                if self.resources.attn_pin.asserted() {
                     embassy_futures::select::Either::First(listen_future.await)
                 }
                 else {
@@ -335,7 +339,7 @@ impl<
                 }
                 embassy_futures::select::Either::Second(()) => {
                     trace!("Signalling host that we have an input report ready");
-                    self.resources.attn_pin.set_high().expect("TODO handle attn pin error");
+                    self.resources.attn_pin.assert_interrupt().expect("TODO handle attn pin error");
                 }
             }
         }
@@ -558,7 +562,7 @@ impl<
                     .await?;
 
                     if self.resources.hid_device.receiver().is_empty() {
-                        self.resources.attn_pin.set_low().expect("TODO handle attn pin error");
+                        self.resources.attn_pin.clear_interrupt().expect("TODO handle attn pin error");
                     }
                     Ok(())
                 } else {
@@ -760,7 +764,7 @@ impl<
         trace!("Executing reset");
         self.resources.hid_device.host_reset().await;
         self.resources.pending_reset = true;
-        self.resources.attn_pin.set_high().expect("TODO handle attn pin error");
+        self.resources.attn_pin.assert_interrupt().expect("TODO handle attn pin error");
     }
 }
 
