@@ -14,7 +14,7 @@ use embedded_mcu_hal::i2c::target::WriteStatus;
 use embedded_mcu_hal::i2c::target::asynch::I2c as I2cTargetAsync;
 use embedded_services::relay::hid;
 use embedded_services::relay::hid::{GetHidReport, HidReport, HidResult, ReportReceiver, SetHidReport};
-use embedded_services::{error, trace};
+use embedded_services::{error, info, trace, warn};
 use generic_array::ArrayLength;
 use typenum::Max;
 use zerocopy::IntoBytes;
@@ -110,6 +110,7 @@ impl<T> sealed::Sealed for T where T: ConstrainedHidDevice{}
 // These are our convention, not from the HID-I2C spec. TODO figure out if a device with a single I2C bus address is allowed to expose more than one register file? if it is we may need to rework this to a struct. that would also sort-of solve our reset domain problem (although we'd still need a separate interrupt line per device)...
 #[repr(u16)]
 #[derive(num_enum::TryFromPrimitive, num_enum::IntoPrimitive, Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum HidI2cRegister {
     DeviceDescriptor = 0x01, // NOTE: Per the HID-I2C spec, when using ACPI for enumeration, this value needs to be put in the _DSM. The others are discovered by reading this one.
     ReportDescriptor = 0x02,
@@ -122,6 +123,7 @@ enum HidI2cRegister {
 /// HID-I2C Command Opcode as specified in section 7.1.1 of the HID-I2C spec
 #[repr(u8)]
 #[derive(num_enum::TryFromPrimitive, num_enum::IntoPrimitive, Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum Opcode {
     // Reserved: 0x00
     Reset = 0x01,
@@ -144,6 +146,7 @@ enum Opcode {
 /// I2C wire format representation for HID power states
 #[repr(u8)]
 #[derive(num_enum::TryFromPrimitive, num_enum::IntoPrimitive, Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum I2cPowerState {
     On = 0x00,
     Sleep = 0x01,
@@ -160,6 +163,7 @@ impl From<I2cPowerState> for hid::HidDevicePowerState {
 
 #[repr(u8)]
 #[derive(num_enum::TryFromPrimitive, num_enum::IntoPrimitive, Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum HidI2cReportType {
     Input,
     Output,
@@ -211,7 +215,7 @@ impl<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: 
 struct RunnerResources<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice>
 {
     bus: Bus,
-    attn_pin: AttnPin,
+    attn_pin: AttnPinHandler<AttnPin>,
     hid_device: HidDevice, // TODO some sort of channel for talking to runner?
     device_descriptor: DeviceDescriptor,
 
@@ -240,7 +244,7 @@ impl<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: 
     ) -> Self {
         Self {
             bus,
-            attn_pin,
+            attn_pin: AttnPinHandler::new(attn_pin),
             hid_device,
             device_descriptor: device_descriptor,
             read_buf: generic_array::GenericArray::default(),
@@ -249,6 +253,33 @@ impl<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: 
             data_read_timeout,
             pending_reset: false // The host is responsible for explicitly resetting us at boot, so we start in a non-reset state
         }
+    }
+}
+
+struct AttnPinHandler<AttnPin: embedded_hal::digital::OutputPin> {
+    attn_pin: AttnPin,
+    high: bool
+}
+
+impl<AttnPin: embedded_hal::digital::OutputPin> AttnPinHandler<AttnPin> {
+    fn new(attn_pin: AttnPin) -> Self {
+        Self { attn_pin, high: false}
+    }
+
+    fn set_low(&mut self) -> Result<(), AttnPin::Error> {
+        trace!("ATTN: set low");
+        self.high = false;
+        self.attn_pin.set_low()
+    }
+
+    fn set_high(&mut self) -> Result<(), AttnPin::Error> {
+        trace!("ATTN: set high");
+        self.high = true;
+        self.attn_pin.set_high()
+    }
+
+    fn is_high(&self) -> bool {
+        self.high
     }
 }
 
@@ -286,13 +317,24 @@ impl<
             //      a control handle or something so we can borrow both pieces of the underlying struct at the same time?
             let event = {
                 let receiver = self.resources.hid_device.receiver();
-                embassy_futures::select::select(self.resources.bus.listen(), receiver.ready_to_receive()).await
+                let listen_future = self.resources.bus.listen();
+                // If we've raised the interrupt, we know it won't go down again until it's serviced, so we don't need to
+                // wait for it
+                if self.resources.attn_pin.is_high() {
+                    embassy_futures::select::Either::First(listen_future.await)
+                }
+                else {
+                    embassy_futures::select::select(listen_future, receiver.ready_to_receive()).await
+                }
             };
             match event {
                 embassy_futures::select::Either::First(bus_request) => {
+                    trace!("Processing request from host");
                     self.process_request(bus_request.expect("TODO handle error recovery")).await;
+                    trace!("Done processing request from host"); // TODO rm
                 }
                 embassy_futures::select::Either::Second(()) => {
+                    trace!("Signalling host that we have an input report ready");
                     self.resources.attn_pin.set_high().expect("TODO handle attn pin error");
                 }
             }
@@ -319,16 +361,19 @@ impl<
                 Ok(WriteStatus::Stopped(bytes))
                 | Ok(WriteStatus::Restarted(bytes))
                 | Ok(WriteStatus::BufferFull(bytes)) => {
-                    trace!("Received write request for address {:#x}", bytes);
+                    // TODO figure out how to not have to match this twice, I think it involves making the original write_status `format`
+                    if let Ok(write_status) = write_status {
+                        trace!("Host issued write command: {:?}", write_status);
+                    }
                     Ok(bytes)
                 }
                 Err(e) => {
-                    // error!("Error during bus read: {:?}", e); // TODO figure out debug tracing bound
+                    error!("Error during bus read"); // TODO figure out debug tracing bound
                     bus.recover().await.expect("TODO handle bus recovery error");
                     Err(Error::Bus(e))
                 }
                 _ => {
-                    // error!("Unexpected write status: {:?}", write_status); // TODO figure out debug tracing bound
+                    error!("Unexpected write status"); // TODO figure out debug tracing bound
                     bus.recover().await.expect("TODO handle bus recovery error");
                     Err(Error::Hid(HidError::InvalidData))
                 }
@@ -351,13 +396,23 @@ impl<
     }
 
     async fn listen_bus(bus: &mut Bus, timeout: Duration) -> Result<Request, Error<Bus::Error>> {
-        match with_timeout(timeout, bus.listen()).await {
-            Err(_timeout_error) => {
-                error!("Listen request timeout");
-                bus.recover().await.expect("TODO handle bus recovery error");
-                Err(Error::Hid(HidError::Timeout))
+        loop {
+            let result = match with_timeout(timeout, bus.listen()).await {
+                Err(_timeout_error) => {
+                    error!("Listen request timeout");
+                    bus.recover().await.expect("TODO handle bus recovery error");
+                    Err(Error::Hid(HidError::Timeout))
+                }
+                Ok(result) => result.map_err(|_| Error::Hid(HidError::Timeout)),
+            };
+
+            // TODO is this the right thing to do?
+            if let Ok(Request::RepeatedStart(_a)) = result {
+                info!("Received repeated start; ignoring");
+                continue;
             }
-            Ok(result) => result.map_err(|_| Error::Hid(HidError::Timeout)),
+
+            return result;
         }
     }
 
@@ -372,7 +427,10 @@ impl<
         //
         match request {
             Request::Write(_address) => {
-                self.process_register_access().await;
+                self.process_register_access().await.expect("TODO handle error correctly");
+                // if let Err(e) = result {
+                //     error!("Error processing register access");
+                // }
             }
             Request::Read(_address) => {
                 // TODO the old impl did an input report read here, but it's not clear to me that that's correct?
@@ -382,10 +440,11 @@ impl<
                 //
                 //      But also the sequence diagram in section 6.1.3 doesn't have it issuing a write to the "register to read" field at all, so seems ambiguous. Need to verify with an in-market device, I guess
                 //
-                todo!("figure out if we're supposed to handle this case - I think this is an invalid message?")
+                // todo!("figure out if we're supposed to handle this case - I think this is an invalid message? request {:?}", request)
                 //
                 // To match the old behavior we'd do:
-                // self.process_input_report_read().await;
+                warn!("Treating naked read from host as a request for an input report, unclear if this is correct");
+                self.process_input_report_read().await.expect("TODO handle error correctly");
             }
 
             // TODO this is in line with what we were doing for the I2cCommand::Probe command in the old hid service, but it's not
@@ -404,14 +463,17 @@ impl<
         let mut reg = [0u8; 2];
         Self::read_bus(&mut self.resources.bus, self.resources.data_read_timeout, &mut reg).await?;
 
-        match HidI2cRegister::try_from(u16::from_le_bytes(reg))
-            .map_err(|_| Error::Hid(HidError::InvalidRegisterAddress))?
-        {
+        let register = HidI2cRegister::try_from(u16::from_le_bytes(reg))
+            .map_err(|_| Error::Hid(HidError::InvalidRegisterAddress))?;
+
+        info!("Host requested to access register {:?}", register);
+        match register {
             HidI2cRegister::DeviceDescriptor => {
                 // TODO do we need to handle the case where the host decides to talk to someone else in the middle of talking to us?
                 let request = Self::listen_bus(&mut self.resources.bus, self.resources.device_response_timeout).await?;
                 match request {
                     Request::Read(_address) => {
+                        trace!("Responding to request for device descriptor");
                         Self::write_bus(
                             &mut self.resources.bus,
                             self.resources.device_response_timeout,
@@ -430,6 +492,7 @@ impl<
                 match Self::listen_bus(&mut self.resources.bus, self.resources.device_response_timeout).await? {
                     // TODO do we need to handle the case where the host decides to talk to someone else in the middle of talking to us?
                     Request::Read(_address) => {
+                    trace!("Responding to request for report descriptor");
                         Self::write_bus(
                             &mut self.resources.bus,
                             self.resources.device_response_timeout,
@@ -464,6 +527,7 @@ impl<
     /// Process a request for an input report that we've asserted an interrupt for (i.e. not a request for a specific input report ID)
     async fn process_input_report_read(&mut self) -> Result<(), Error<Bus::Error>> {
         if self.resources.pending_reset {
+            info!("Processing first input report read after reset");
             // Upon reset, the next input report read is supposed to return a length of 0x0000 to ack the reset
             Self::write_bus(
                 &mut self.resources.bus,
@@ -571,7 +635,8 @@ impl<
     }
 
     async fn process_command(&mut self) -> Result<(), Error<Bus::Error>> {
-        let [opcode_byte, command_byte] = {
+        // TODO emperically it looks like I had this backward but verify in the spec that I'm not missing something here about the order
+        let [command_byte, opcode_byte] = {
             let mut command_header_buffer = [0u8; 2];
             Self::read_bus(
                 &mut self.resources.bus,
@@ -582,12 +647,19 @@ impl<
             command_header_buffer
         };
 
-        match Opcode::try_from(opcode_byte).map_err(|_| Error::Hid(HidError::InvalidCommand))? {
+        let opcode = Opcode::try_from(opcode_byte).map_err(|_| Error::Hid(HidError::InvalidCommand));
+        if opcode.is_err() {
+            error!("Received invalid opcode: {:#x} (command {:#x})", opcode_byte, command_byte);
+        }
+
+        match opcode? {
             Opcode::Reset => {
+                trace!("Processing reset command");
                 self.reset().await;
                 Ok(())
             }
             Opcode::SetPower => {
+                trace!("Processing set power command");
                 let power_state =
                     I2cPowerState::try_from(command_byte).map_err(|_| Error::Hid(HidError::InvalidCommand))?;
                 self.resources.hid_device.set_power_state(power_state.into()).await;
@@ -595,9 +667,12 @@ impl<
             }
 
             Opcode::GetReport => {
+                trace!("Processing get report command");
+
                 let (report_type, report_id) = self.get_command_report_header(command_byte).await?;
                 match self.resources.hid_device.get_report(report_id).await {
                     HidResult::TriggerReset => {
+                        trace!("Triggering reset due to GetReport failure");
                         self.reset().await;
                         Err(Error::Hid(HidError::Timeout)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
                     }
@@ -627,6 +702,7 @@ impl<
             }
 
             Opcode::SetReport => {
+                trace!("Processing set report command");
                 let (report_type, report_id) = self.get_command_report_header(command_byte).await?;
                 let mut len_header = [0u8; 2];
                 Self::read_bus(
@@ -670,6 +746,7 @@ impl<
 
                 match self.resources.hid_device.set_report(&set_report).await {
                     HidResult::TriggerReset => {
+                        trace!("Triggering reset due to HID result timeout");
                         self.reset().await;
                         Err(Error::Hid(HidError::InvalidCommand)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
                     }
@@ -680,6 +757,7 @@ impl<
     }
 
     async fn reset(&mut self) {
+        trace!("Executing reset");
         self.resources.hid_device.host_reset().await;
         self.resources.pending_reset = true;
         self.resources.attn_pin.set_high().expect("TODO handle attn pin error");
@@ -766,23 +844,3 @@ pub struct InitParams<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::Outpu
     /// Timeout for data reads from the host.
     pub data_read_timeout: Duration,
 }
-
-/////////////////////////////////////////////////////////////////////////////
-// Hid design notes here, TODO flesh these out, move to impl
-
-// // NOTE: This is a placeholder for an I2C target trait that does not yet exist - I believe Felipe is working on it and targeting getting it into embedded_hal.
-// // We'll need a similar trait for i3c, and the HAL will need to provide implementations of these traits, but leading with i2c since we have it today and
-// // can develop it in the open. As currently shown, this is loosely based on part of embassy-imxrt's non-trait-based I2C target implementation.
-// //
-// // This represents a single target device on the bus, but depending on hardware support for virtual addressing, it may be possible to create more than
-// // one instance of this trait on the same physical bus with different addresses. That's how you'd make yourself present as multiple HidDevices if you
-// // wanted to isolate reset domains.
-// //
-// // This trait will be implemented by the HAL.
-// //
-// trait I2cTarget { // alternatively, "I3cTarget" which will have a similar API but also support firing an in-band interrupt in some capacity
-//     fn address(&self) -> u16;
-//     async fn listen(&mut self);
-//     async fn respond_to_read(&mut self, data: &[u8]) -> Result<()>;
-//     async fn respond_to_write(&mut self, data: &[u8]) -> Result<()>;
-// }

@@ -13,6 +13,8 @@ use panic_probe as _;
 use zerocopy::IntoBytes;
 use embedded_services::relay::hid::*;
 
+use embedded_services::warn;
+
 const SLAVE_ADDR: Option<Address> = Address::new(0x15);
 
 // This is adapted from the example mouse HID descriptor packaged with the DT.exe tool
@@ -67,11 +69,15 @@ struct MockTouchpadService {
 
 impl MockTouchpadService {
     pub fn send_click(&self) {
-        self.channel.try_send(MouseReport {
+        let send_result = self.channel.try_send(MouseReport {
             buttons: MOUSE_BUTTON_1,
             x: 0,
             y: 0,
-        }).unwrap()
+        });
+
+        if let Err(e) = send_result {
+            warn!("Failed to send click report: {:?}", e);
+        }
     }
 
     pub fn receiver(&self) -> embassy_sync::channel::Receiver<'_, embedded_services::GlobalRawMutex, MouseReport, 3> {
