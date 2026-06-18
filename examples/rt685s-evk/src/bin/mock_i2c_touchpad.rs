@@ -67,7 +67,8 @@ struct MockTouchpadService {
 }
 
 impl MockTouchpadService {
-    pub fn send_click(&self) {
+    pub async fn send_click(&self) {
+        // Mouse down
         let send_result = self.channel.try_send(MouseReport {
             buttons: MOUSE_BUTTON_1,
             x: 0,
@@ -77,6 +78,15 @@ impl MockTouchpadService {
         if let Err(e) = send_result {
             warn!("Failed to send click report: {:?}", e);
         }
+
+        embassy_time::Timer::after(embassy_time::Duration::from_millis(10)).await;
+
+        // Mouse up
+        let send_result = self.channel.try_send(MouseReport {
+            buttons: 0,
+            x: 0,
+            y: 0,
+        });
     }
 
     pub fn move_mouse(&self) {
@@ -178,7 +188,7 @@ impl embedded_services::relay::hid::HidDevice for MockTouchpadHidRelay<'_> {
     }
 
     fn receiver(&mut self) -> Self::ReportReceiver<'_> {
-        TouchpadNotificationHidReceiver{receiver: self.service.receiver()} // TODO need to have a thread to consume from the actual service and pass through to this channel, or implement a consumer/editor
+        TouchpadNotificationHidReceiver{receiver: self.service.receiver()}
     }
 
     async fn set_power_state(&mut self, state: HidDevicePowerState) -> HidResult<()> {
@@ -260,10 +270,14 @@ async fn main(spawner: Spawner) {
         )
     );
 
+    // TODO I have some sort of race
+    info!("Waiting 10s before starting to send inputs");
+    embassy_time::Timer::after(embassy_time::Duration::from_secs(10)).await;
+
     loop {
-        embassy_time::Timer::after(embassy_time::Duration::from_millis(2000)).await;
         info!("clicking touchpad");
-        touchpad_service.send_click();
+        touchpad_service.send_click().await;
+        embassy_time::Timer::after(embassy_time::Duration::from_millis(2000)).await;
     }
 }
 

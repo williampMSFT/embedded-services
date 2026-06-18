@@ -459,11 +459,16 @@ impl<
             //          Request::GeneralCall                 // I don't know what this is
             //          Request::SmbusAlert                  // I don't know what this is
             //
-            _ => return,
+            _ => {
+                warn!("Not handling command {:?}", request);
+                return;
+            },
         }
     }
 
     async fn process_register_access(&mut self) -> Result<(), Error<Bus::Error>> {
+        info!("Processing register access");
+
         let mut reg = [0u8; 2];
         Self::read_bus(&mut self.resources.bus, self.resources.data_read_timeout, &mut reg).await?;
 
@@ -543,15 +548,19 @@ impl<
             self.resources.pending_reset = false;
             return Ok(());
         }
+
         let report = self.resources.hid_device.receiver().receive().await; // TODO should we timeout?
         match report {
             HidResult::Ok(report) => {
                 if let Request::Read(_address) =
                     Self::listen_bus(&mut self.resources.bus, self.resources.device_response_timeout).await?
                 {
-                    let [size_low, size_high] = (report.data().len() as u16).to_le_bytes();
+                    let [size_low, size_high] = (report.data().len() as u16 + device_descriptor::HID_INPUT_REPORT_HEADER_SIZE_BYTES).to_le_bytes();
                     let header = [size_low, size_high, report.id().0];
 
+                    trace!("Responding to input report read with report ID {:?} and length {}", report.id(), report.data().len());
+                    trace!("header: {:x}", header);
+                    trace!("payload: {:x}", report.data());
                     // TODO make sure this is legal - these shouldn't be split across two transactions but I don't want to have to copy everything to a buffer just to copy it out again?
                     Self::write_bus(&mut self.resources.bus, self.resources.device_response_timeout, &header).await?;
                     Self::write_bus(

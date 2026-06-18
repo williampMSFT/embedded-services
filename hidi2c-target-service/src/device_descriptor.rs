@@ -55,6 +55,8 @@ pub struct VendorId(pub u16); // TODO can't be 0
 pub struct ProductId(pub u16);
 pub struct VersionId(pub u16);
 
+pub const HID_INPUT_REPORT_HEADER_SIZE_BYTES: u16 = 3;
+
 impl DeviceDescriptor {
     // TODO this thing seems like it should be partially generatable from a report descriptor (max sizes)? maybe we make some of these private and consume them that way
     pub fn new<HidDevice: hid::HidDevice>(
@@ -73,7 +75,7 @@ impl DeviceDescriptor {
             w_report_desc_length: hid_device.report_descriptor().as_bytes().len() as u16,
             w_report_desc_register: crate::HidI2cRegister::ReportDescriptor as u16,
             w_input_register: crate::HidI2cRegister::Input.into(),
-            w_max_input_length: HidDevice::InputReportMaxSize::USIZE as u16, // TODO figure out if this is the right place to assert that the descriptor matches the constants; also, maybe this should come from the dynamic descriptor?
+            w_max_input_length: HidDevice::InputReportMaxSize::USIZE as u16 + HID_INPUT_REPORT_HEADER_SIZE_BYTES, // TODO figure out if this is the right place to assert that the descriptor matches the constants; also, maybe this should come from the dynamic descriptor?
             w_output_register: crate::HidI2cRegister::Output.into(),
             w_max_output_length: HidDevice::OutputReportMaxSize::USIZE as u16, // TODO figure out if this is the right place to assert that the descriptor matches the constants; also, maybe this should come from the dynamic descriptor?
             w_command_register: crate::HidI2cRegister::Command.into(),
