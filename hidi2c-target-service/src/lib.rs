@@ -482,13 +482,14 @@ impl<
                 let request = Self::listen_bus(&mut self.resources.bus, self.resources.device_response_timeout).await?;
                 match request {
                     Request::Read(_address) => {
-                        trace!("Responding to request for device descriptor");
+                        trace!("Responding to request for device descriptor with {} bytes", self.resources.device_descriptor.as_bytes().len());
                         Self::write_bus(
                             &mut self.resources.bus,
                             self.resources.device_response_timeout,
                             self.resources.device_descriptor.as_bytes(),
                         )
                         .await?;
+                        trace!("Done responding to request for device descriptor"); // TODO rm
                         Ok(())
                     }
                     _ => {
@@ -546,21 +547,19 @@ impl<
             .await?;
 
             self.resources.pending_reset = false;
+            // TODO do we need to deassert interrupt if there's nothing pending here?
             return Ok(());
         }
 
         let report = self.resources.hid_device.receiver().receive().await; // TODO should we timeout?
         match report {
             HidResult::Ok(report) => {
-                if let Request::Read(_address) =
-                    Self::listen_bus(&mut self.resources.bus, self.resources.device_response_timeout).await?
-                {
+                let read_request = Self::listen_bus(&mut self.resources.bus, self.resources.device_response_timeout).await?;
+                if let Request::Read(_address) = read_request {
                     let [size_low, size_high] = (report.data().len() as u16 + device_descriptor::HID_INPUT_REPORT_HEADER_SIZE_BYTES).to_le_bytes();
                     let header = [size_low, size_high, report.id().0];
 
-                    trace!("Responding to input report read with report ID {:?} and length {}", report.id(), report.data().len());
-                    trace!("header: {:x}", header);
-                    trace!("payload: {:x}", report.data());
+                    trace!("Responding with input report {}: {:x} {:x}", report.id(), header, report.data());
                     // TODO make sure this is legal - these shouldn't be split across two transactions but I don't want to have to copy everything to a buffer just to copy it out again?
                     Self::write_bus(&mut self.resources.bus, self.resources.device_response_timeout, &header).await?;
                     Self::write_bus(
@@ -575,7 +574,7 @@ impl<
                     }
                     Ok(())
                 } else {
-                    error!("Expected read request after input report register access");
+                    error!("Expected read request after input report register access, got {:?}", read_request);
                     Err(Error::Hid(HidError::InvalidCommand))
                 }
             }

@@ -17,7 +17,7 @@ use embedded_services::warn;
 
 const SLAVE_ADDR: Option<Address> = Address::new(0x15);
 
-// This is adapted from the example mouse HID descriptor packaged with the DT.exe tool
+// This is adapted from the example mouse HID descriptor packaged with the DT.exe tool / https://learn.microsoft.com/en-us/windows-hardware/design/component-guidelines/mouse-collection-report-descriptor
 const REPORTID_MOUSE: u8 = 1;
 const MOUSE_HID_REPORT_DESCRIPTOR: &[u8] = &[
     0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
@@ -79,7 +79,7 @@ impl MockTouchpadService {
             warn!("Failed to send click report: {:?}", e);
         }
 
-        embassy_time::Timer::after(embassy_time::Duration::from_millis(10)).await;
+        embassy_time::Timer::after(embassy_time::Duration::from_millis(15)).await;
 
         // Mouse up
         let send_result = self.channel.try_send(MouseReport {
