@@ -9,6 +9,7 @@
 
 use core::marker::PhantomData;
 use embassy_time::{Duration, with_timeout};
+use embedded_mcu_hal::i2c::target::ReadStatus;
 use embedded_mcu_hal::i2c::target::Request;
 use embedded_mcu_hal::i2c::target::WriteStatus;
 use embedded_mcu_hal::i2c::target::asynch::I2c as I2cTargetAsync;
@@ -399,6 +400,61 @@ impl<
         }
     }
 
+    /// Respond to a host read of the Input register by sending each slice in
+    /// `parts` in order, then padding with zero bytes until the host ends the
+    /// read.
+    ///
+    /// The HID-over-I2C host reads up to `wMaxInputLength` bytes from the Input
+    /// register in a single read transaction. If we supply fewer bytes than the
+    /// host clocks for, the I2C target peripheral runs out of TX data and
+    /// clock-stretches SCL low (TXDSTALL) waiting for more bytes. Critically,
+    /// the embassy target driver only resets its TX FIFO and releases SCL when
+    /// the transfer terminates cleanly (`Complete`/`EarlyStop` on STOP/repeated
+    /// START); when it returns `NeedMore` it deliberately leaves the FIFO and
+    /// SCL stretched. If we stop responding on a `NeedMore`, the read never
+    /// terminates: SCL stays low ("the clock won't go high") and the leftover
+    /// FIFO/bus state corrupts the *next* transaction — which is why every other
+    /// packet comes out garbled. Sending all of our bytes and then padding with
+    /// zeros guarantees the host NACK+STOPs at its chosen length, so the driver
+    /// hits `Complete`/`EarlyStop`, resets the FIFO, and releases SCL for the
+    /// next packet — matching how a real device behaves.
+    ///
+    /// Sending the report as a single padded response (rather than separate
+    /// `write_bus` calls per chunk that each ignore their status) is what keeps
+    /// the whole input report inside one cleanly-terminated read.
+    async fn respond_to_input_read(bus: &mut Bus, timeout: Duration, parts: &[&[u8]]) -> Result<(), Error<Bus::Error>> {
+        const ZERO_PAD: [u8; 8] = [0u8; 8];
+        let mut idx = 0;
+        loop {
+            // Walk through the caller's parts in order; once we run off the end, keep
+            // feeding zero padding until the host terminates the read.
+            let chunk: &[u8] = parts.get(idx).copied().unwrap_or(&ZERO_PAD);
+            // Skip caller-supplied empty parts without wasting a bus round-trip.
+            if chunk.is_empty() && idx < parts.len() {
+                idx += 1;
+                continue;
+            }
+            let status = match with_timeout(timeout, bus.respond_to_read(chunk)).await {
+                Err(_timeout_error) => {
+                    error!("Write request timeout");
+                    bus.recover().await.expect("TODO handle bus recovery error");
+                    return Err(Error::Hid(HidError::Timeout));
+                }
+                Ok(result) => result.map_err(Error::Bus)?,
+            };
+            match status {
+                // Host terminated the read (NACK+STOP or repeated START): the driver reset its FIFO
+                // and released SCL, so we're done.
+                ReadStatus::Complete(_) | ReadStatus::EarlyStop(_) => return Ok(()),
+                // Host is still clocking and wants more bytes than we provided; advance to the next
+                // part, or zero-pad once we're past the end, so the peripheral stops stretching SCL.
+                ReadStatus::NeedMore(_) => idx += 1,
+                // `ReadStatus` is non-exhaustive; any future termination variant: stop responding.
+                _ => return Ok(()),
+            }
+        }
+    }
+
     async fn listen_bus(bus: &mut Bus, timeout: Duration) -> Result<Request, Error<Bus::Error>> {
         loop {
             let result = match with_timeout(timeout, bus.listen()).await {
@@ -448,7 +504,7 @@ impl<
                 //
                 // To match the old behavior we'd do:
                 warn!("Treating naked read from host as a request for an input report, unclear if this is correct");
-                self.process_input_report_read().await.expect("TODO handle error correctly");
+                self.reply_with_input_report().await.expect("TODO handle error correctly");
             }
 
             // TODO this is in line with what we were doing for the I2cCommand::Probe command in the old hid service, but it's not
@@ -536,47 +592,67 @@ impl<
 
     /// Process a request for an input report that we've asserted an interrupt for (i.e. not a request for a specific input report ID)
     async fn process_input_report_read(&mut self) -> Result<(), Error<Bus::Error>> {
+        info!("Processing normal input report request");
+        let read_request = Self::listen_bus(&mut self.resources.bus, self.resources.device_response_timeout).await?;
+        if let Request::Read(_address) = read_request {
+            self.reply_with_input_report().await
+        } else {
+            error!("Expected read request after input report register access, got {:?}", read_request);
+            Err(Error::Hid(HidError::InvalidCommand))
+        }
+    }
+
+    // Call this after listening. TODO figure out if we can enforce this in the type system somehow, maybe take a request or something
+    async fn reply_with_input_report(&mut self) -> Result<(), Error<Bus::Error>> {
         if self.resources.pending_reset {
             info!("Processing first input report read after reset");
-            // Upon reset, the next input report read is supposed to return a length of 0x0000 to ack the reset
-            Self::write_bus(
+            // Upon reset, the next input report read is supposed to return a length of 0x0000 to ack the reset.
+            // The host clocks out wMaxInputLength bytes for this read, which is longer than the 2-byte length we
+            // send, so we must keep feeding zero padding until the host terminates the read. Otherwise the I2C
+            // target peripheral clock-stretches SCL low waiting for more TX data and the bus hangs forever.
+            Self::respond_to_input_read(
                 &mut self.resources.bus,
                 self.resources.device_response_timeout,
-                &[0x00, 0x00], // Length of 0 to acknowledge reset
+                &[&[0x00, 0x00]], // Length of 0 to acknowledge reset
             )
             .await?;
 
             self.resources.pending_reset = false;
-            // TODO do we need to deassert interrupt if there's nothing pending here?
+            // The reset acknowledgment is a single (zero-length) input report. Now that the host has
+            // read it and there's nothing else pending, we must deassert the interrupt. For a
+            // level-triggered active-low host interrupt, leaving it asserted would make the host
+            // believe data is perpetually pending and prevent it from ever seeing a fresh
+            // deassert->assert edge for subsequent reports.
+            self.resources.attn_pin.clear_interrupt().expect("TODO handle attn pin error");
             return Ok(());
         }
 
         let report = self.resources.hid_device.receiver().receive().await; // TODO should we timeout?
         match report {
             HidResult::Ok(report) => {
-                let read_request = Self::listen_bus(&mut self.resources.bus, self.resources.device_response_timeout).await?;
-                if let Request::Read(_address) = read_request {
-                    let [size_low, size_high] = (report.data().len() as u16 + device_descriptor::HID_INPUT_REPORT_HEADER_SIZE_BYTES).to_le_bytes();
-                    let header = [size_low, size_high, report.id().0];
+                info!("Got report to return - listening to bus for read request");
 
-                    trace!("Responding with input report {}: {:x} {:x}", report.id(), header, report.data());
-                    // TODO make sure this is legal - these shouldn't be split across two transactions but I don't want to have to copy everything to a buffer just to copy it out again?
-                    Self::write_bus(&mut self.resources.bus, self.resources.device_response_timeout, &header).await?;
-                    Self::write_bus(
-                        &mut self.resources.bus,
-                        self.resources.device_response_timeout,
-                        report.data(),
-                    )
-                    .await?;
+                let [size_low, size_high] = (report.data().len() as u16 + device_descriptor::HID_INPUT_REPORT_HEADER_SIZE_BYTES).to_le_bytes();
+                let header = [size_low, size_high, report.id().0];
 
-                    if self.resources.hid_device.receiver().is_empty() {
-                        self.resources.attn_pin.clear_interrupt().expect("TODO handle attn pin error");
-                    }
-                    Ok(())
-                } else {
-                    error!("Expected read request after input report register access, got {:?}", read_request);
-                    Err(Error::Hid(HidError::InvalidCommand))
+                trace!("Responding with input report {}: {:x} {:x}", report.id(), header, report.data());
+                // Send the whole report (length header + report body) as a single, cleanly-terminated
+                // read, padding with zeros if the host clocks past our data. Splitting this across
+                // separate `write_bus` calls that ignore their status leaves the read dangling on a
+                // `NeedMore` (SCL stuck low) whenever the host's read length doesn't line up exactly,
+                // which corrupts the following packet.
+                Self::respond_to_input_read(
+                    &mut self.resources.bus,
+                    self.resources.device_response_timeout,
+                    &[&header, report.data()],
+                )
+                .await?;
+
+                if self.resources.hid_device.receiver().is_empty() {
+                    self.resources.attn_pin.clear_interrupt().expect("TODO handle attn pin error");
                 }
+                Ok(())
+
             }
             HidResult::TriggerReset => {
                 self.reset().await;
