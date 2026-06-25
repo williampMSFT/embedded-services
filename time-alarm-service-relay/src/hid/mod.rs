@@ -25,8 +25,6 @@ impl <T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blocki
 }
 
 impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blocking_mutex::raw::RawMutex> HidDevice for TimeAlarmHidRelay<T, M> {
-
-
     // TODO for the static descriptor case, these should all be inferrable from the report descriptor.
     //      When we have the HID report support types implemented, see if we can have a 'ConstHidDevice'
     //      trait or something and then blanket implement 'HidDevice' for 'ConstHidDevice' that does this

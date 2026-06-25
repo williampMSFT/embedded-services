@@ -108,16 +108,32 @@ where
 
 impl<T> sealed::Sealed for T where T: ConstrainedHidDevice{}
 
-// These are our convention, not from the HID-I2C spec. TODO figure out if a device with a single I2C bus address is allowed to expose more than one register file? if it is we may need to rework this to a struct. that would also sort-of solve our reset domain problem (although we'd still need a separate interrupt line per device)...
+/// HID-I2C register addresses as specified in section 5.1 of the HID-I2C spec.
+/// These specific values are our convention, not from the HID-I2C spec, but section 4.2 indicates
+/// that all HID-I2C devices must have their own I2C bus address so there's no way to share a single
+/// I2C address by leveraging different register addresses on the same I2C address.
+///
 #[repr(u16)]
 #[derive(num_enum::TryFromPrimitive, num_enum::IntoPrimitive, Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum HidI2cRegister {
-    DeviceDescriptor = 0x01, // NOTE: Per the HID-I2C spec, when using ACPI for enumeration, this value needs to be put in the _DSM. The others are discovered by reading this one.
+    /// HID descriptor register - see section 5.1
+    /// NOTE: Per the HID-I2C spec, when using ACPI for enumeration, this value needs to be put in the _DSM.
+    DeviceDescriptor = 0x01,
+
+    /// HID report descriptor register - see section 5.2
     ReportDescriptor = 0x02,
+
+    /// Input report register - see section 6.1
     Input = 0x03,
+
+    /// Output report register - see section 6.2
     Output = 0x04,
+
+    /// Command register - see section 7.1.1
     Command = 0x05,
+
+    /// Data register - see section 7.1.2
     Data = 0x06,
 }
 
@@ -466,17 +482,7 @@ impl<
                 // }
             }
             Request::Read(_address) => {
-                // TODO the old impl did an input report read here, but it's not clear to me that that's correct?
-                //      I think an unsolicited read should never happen - they need to go through a register - right?
-                //      Per the spec 6.1:
-                //               When the HOST receives the Interrupt, it is responsible for reading the data of the DEVICE via the Input Register (field: wInputRegister) as defined in the HID Descriptor. The HOST does this by issuing an I2C read request to the DEVICE.
-                //
-                //      But also the sequence diagram in section 6.1.3 doesn't have it issuing a write to the "register to read" field at all, so seems ambiguous. Need to verify with an in-market device, I guess
-                //
-                // todo!("figure out if we're supposed to handle this case - I think this is an invalid message? request {:?}", request)
-                //
-                // To match the old behavior we'd do:
-                warn!("Treating naked read from host as a request for an input report, unclear if this is correct");
+                info!("HID-I2C: Host requested input report");
                 self.reply_with_input_report().await.expect("TODO handle error correctly");
             }
 
