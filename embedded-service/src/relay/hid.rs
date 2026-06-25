@@ -1,11 +1,5 @@
 //! HID relay code
 
-// TODO remove before checkin
-#![allow(unused_doc_comments)]
-#![allow(dead_code)]
-#![allow(missing_docs)]
-#![allow(async_fn_in_trait)]
-
 use generic_array::{ArrayLength, GenericArray};
 
 // TODO read over comments and make sure they're still true when we go to check in
@@ -24,9 +18,14 @@ pub enum HidResult<T> {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))] // TODO add default impls to all the other types in here
 pub enum HidDevicePowerState {
-    On,    // Normal operation
-    Sleep, // Reduced power state, but a device that sends a report in this state can wake the host - quiesce messages if you don't want to do that
-    Off,   // The device is not allowed to wake the host. I2C does not support this state - I3C and SPI do.
+    /// Normal operation
+    On,
+
+    /// Reduced power state, but a device that sends a report in this state can wake the host - quiesce messages if you don't want to do that
+    Sleep,
+
+    /// The device is not allowed to wake the host. This is not supported on all transports - in particular, I2C will never command a device into the off state.
+    Off,
 }
 
 /// A HID report of no more than X bytes
@@ -38,6 +37,7 @@ pub struct HidReport<MaxSize: ArrayLength> {
 }
 
 impl<MaxSize: ArrayLength> HidReport<MaxSize> {
+    /// Create a new HID report from the provided data slice.
     pub fn new(id: ReportId, data: &[u8]) -> Result<Self, generic_array::LengthError> {
         Ok(Self {
             id,
@@ -50,10 +50,12 @@ impl<MaxSize: ArrayLength> HidReport<MaxSize> {
         })
     }
 
+    /// The report ID for this report
     pub fn id(&self) -> ReportId {
         self.id
     }
 
+    /// The data for this report. This will be no more than `MaxSize` bytes, but may be less if the report is smaller than the maximum size.
     pub fn data(&self) -> &[u8] {
         &self.data.as_slice().get(..self.valid_bytes).unwrap_or(&[])
     }
@@ -61,11 +63,15 @@ impl<MaxSize: ArrayLength> HidReport<MaxSize> {
 
 /// HID report types supported by the SetReport operation.
 pub enum SetHidReport<OutputMaxSize: ArrayLength, FeatureMaxSize: ArrayLength> {
+    /// An output report
     Output(HidReport<OutputMaxSize>),
+
+    /// A feature report
     Feature(HidReport<FeatureMaxSize>),
 }
 
 impl<OutputMaxSize: ArrayLength, FeatureMaxSize: ArrayLength> SetHidReport<OutputMaxSize, FeatureMaxSize> {
+    /// The data for this report, whatever its type.
     pub fn data(&self) -> &[u8] {
         match self {
             SetHidReport::Output(report) => report.data(),
@@ -76,11 +82,15 @@ impl<OutputMaxSize: ArrayLength, FeatureMaxSize: ArrayLength> SetHidReport<Outpu
 
 /// HID report types supported by the GetReport operation.
 pub enum GetHidReport<InputMaxSize: ArrayLength, FeatureMaxSize: ArrayLength> {
+    /// An input report
     Input(HidReport<InputMaxSize>),
+
+    /// A feature report
     Feature(HidReport<FeatureMaxSize>),
 }
 
 impl<InputMaxSize: ArrayLength, FeatureMaxSize: ArrayLength> GetHidReport<InputMaxSize, FeatureMaxSize> {
+    /// The data for this report, whatever its type.
     pub fn data(&self) -> &[u8] {
         match self {
             GetHidReport::Input(report) => report.data(),
@@ -94,9 +104,15 @@ impl<InputMaxSize: ArrayLength, FeatureMaxSize: ArrayLength> GetHidReport<InputM
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReportId(pub u8);
 
+/// An object capable of listening for unsolicited reports from a HID device.
 pub trait ReportReceiver<MaxSize: ArrayLength> {
-    async fn ready_to_receive(&self);
-    async fn receive(&self) -> HidResult<HidReport<MaxSize>>;
+    /// Blocks until the receiver is ready to yield a report.
+    fn ready_to_receive(&self) -> impl core::future::Future<Output = ()>;
+
+    /// Blocks until a report is available and returns it. If the receiver is empty, this will block until a report is available.
+    fn receive(&self) -> impl core::future::Future<Output = HidResult<HidReport<MaxSize>>>;
+
+    /// Returns true if the receiver is empty and there are no reports available to receive.
     fn is_empty(&self) -> bool;
 }
 
@@ -113,6 +129,7 @@ impl<'ch, M: embassy_sync::blocking_mutex::raw::RawMutex, MaxSize: ArrayLength, 
         self.is_empty()
     }
 }
+
 /// A single HID device that we want to present to the host.
 /// This is a transport-agnostic trait that abstracts over the details of how we get reports to/from the host,
 /// so that we can implement it once and then use it for both HID-I2C and HID-I3C (and potentially HID-SPI in the
@@ -127,24 +144,29 @@ impl<'ch, M: embassy_sync::blocking_mutex::raw::RawMutex, MaxSize: ArrayLength, 
 /// The normal pattern in HID seems to be to either embed an error code in an input report or to drop the message entirely.
 ///
 pub trait HidDevice {
-    /// The concrete type used for input reports (device -> host).
-    /// Implementors typically set this to `HidReport<N>` for some `N`.
+    /// The maximum size of an input report (device -> host) that this device can use, expressed in bytes.
+    /// This must agree with the descriptor returned by `report_descriptor()`.
     type InputReportMaxSize: ArrayLength;
 
-    /// The concrete type used for output reports (host -> device). // TODO update comments
+    /// The maximum size of an output report (host -> device) that this device can use, expressed in bytes.
+    /// This must agree with the descriptor returned by `report_descriptor()`.
     type OutputReportMaxSize: ArrayLength;
 
-    /// The concrete type used for feature reports (bidirectional).
+    /// The maximum size of a feature report (bidirectional) that this device can use, expressed in bytes.
+    /// This must agree with the descriptor returned by `report_descriptor()`.
     type FeatureReportMaxSize: ArrayLength;
 
     /// The type that will surface HID reports as they become available.
+    /// In general, default to using `embassy_sync::channel::Receiver<'a, M, HidResult<HidReport<Self::InputReportMaxSize>>, N>`
+    /// where `N` is some reasonable upper bound on the number of pending reports unless you have a specific reason to do something
+    /// else.
     type ReportReceiver<'a>: ReportReceiver<Self::InputReportMaxSize>
     where
         Self: 'a;
 
     /// The maximum number of individual reports that the device will have.  In most cases, this should be exactly the number of
     /// reports that the device has, but in the passthrough case where that knowledge isn't available at compile time, this will
-    /// be an upper bound.
+    /// be an upper bound.  This must agree with the descriptor returned by `report_descriptor()`.
     ///
     const MAX_REPORT_COUNT: u8;
 
@@ -152,32 +174,32 @@ pub trait HidDevice {
     /// we can't require that it be known at compile time.
     /// If the descriptor disagrees with the sizes implied by `InputReport` / `FeatureReport` / `OutputReport` / `MAX_REPORT_COUNT`, callers should not use the object. // TODO figure out if we can write a wrapper that verifies this in the type system, maybe a ValidatedHidDevice or something
     ///
-    /// TODO it may be interesting to have a ConstHidDevice trait that has the same API but with the descriptor as an associated
-    ///      const, and then have a blanket implementation of HidDevice for ConstHidDevice that derives these or something? Might
-    ///      make usage more ergonomic in the non-passthrough case, which is likely to be more common. Can punt on that for now though.
-    ///
+    // TODO it may be valuable to have a ConstHidDevice trait that has the same API but with the descriptor as an associated
+    //      const, and then have a blanket implementation of HidDevice for ConstHidDevice that derives these or something? Might
+    //      make usage more ergonomic in the non-passthrough case, which is likely to be more common.
+    //
     fn report_descriptor(&self) -> &HidReportDescriptor;
 
     /// Respond to an explicit request for a particular report from the host. You must fill `out` with the report data.
-    async fn get_report(
+    fn get_report(
         &mut self,
         report_id: ReportId,
-    ) -> HidResult<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>>; // TODO: I believe the Rust compiler will do RVO for this, but verify in compiler explorer
+    ) -> impl core::future::Future<Output = HidResult<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>>>; // TODO: I believe the Rust compiler will do RVO for this, but verify in compiler explorer
 
     /// Respond to a command from the host to handle a particular output/feature report.
-    async fn set_report(
+    fn set_report(
         &mut self,
         report: &SetHidReport<Self::OutputReportMaxSize, Self::FeatureReportMaxSize>,
-    ) -> HidResult<()>;
+    ) -> impl core::future::Future<Output = HidResult<()>>;
 
     /// This is for 'unsolicited' reports - user is responsible for polling this and sending it up.
     fn receiver(&mut self) -> Self::ReportReceiver<'_>;
 
     /// Called when the host commands a particular power state.
-    async fn set_power_state(&mut self, state: HidDevicePowerState) -> HidResult<()>;
+    fn set_power_state(&mut self, state: HidDevicePowerState) -> impl core::future::Future<Output = HidResult<()>>;
 
     /// Called when the host commands a reset, or when a peer HidDevice in an aggregate triggers a device-initiated reset.
-    async fn host_reset(&mut self);
+    fn host_reset(&mut self) -> impl core::future::Future<Output = ()>;
 }
 
 // TODO we need to expand on how we're going to present HidReportDescriptors. Initially, it might be a [u8;N] that's just the binary
@@ -192,16 +214,19 @@ pub trait HidDevice {
 //
 // Note - all reports must be byte-aligned, so our support library may need to either emit padding or break the build if padding
 // isn't added manually by the user.
+
+/// A HID report descriptor
 pub struct HidReportDescriptor {
-    bytes: &'static [u8] // TODO this probably doesn't work in the passthrough case; may need to be generic over a size or have some sort of buffer type or lifetime annotation or something
+    bytes: &'static [u8] // TODO this probably doesn't work in the passthrough case; may need to be generic over a size/lifetime or have some sort of buffer type or lifetime annotation or something
 }
 
 impl HidReportDescriptor {
+    /// Returns the raw bytes of the HID report descriptor. This is what will be sent to the host when it requests the HID descriptor.
     pub fn as_bytes(&self) -> &[u8] {
         self.bytes
     }
 
-    // TODO this is a hack for bootstrap until we have a HID support library that can codegen one of these from a bunch of annotated structs or something.
+    /// Constructs a HID descriptor from a statically computed and allocated byte slice. // TODO this is a hack for bootstrap until we have a HID support library that can codegen one of these from a bunch of annotated structs or something.
     pub fn new_static(bytes: &'static [u8]) -> Self {
         // TODO validate that this is a well-formed HID report descriptor and that all reports are byte-aligned and whatnot - that'll be part of the hid support library.
         //      alternatively, could just get rid of this when we have the HID support library and have this codegenned or something
