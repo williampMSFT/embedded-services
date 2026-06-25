@@ -311,10 +311,6 @@ impl<
 {
     async fn run(mut self) -> embedded_services::Never {
         loop {
-            // TODO this thing is going to fire a bunch if ready_to_receive is triggered,
-            //      we may need some sort of way to not wait for ready_to_receive after pin is set high until it goes low again
-            //
-
             // TODO this feels a little weird? we have to construct a receiver every time to avoid running afoul of the borrow checker when
             //      we try to use another method on the HidDevice. Receiver is cheap to construct (it's really just a pointer-to-channel),
             //      but it seems a bit odd and if someone wanted to use another non-embassy_sync::Channel type to implement this it might be
@@ -422,6 +418,7 @@ impl<
         }
     }
 
+    /// Waits for the controller to command us over the bus, with timeout handling.
     async fn listen_bus(bus: &mut Bus, timeout: Duration) -> Result<Request, Error<Bus::Error>> {
         loop {
             let result = match with_timeout(timeout, bus.listen()).await {
@@ -573,10 +570,11 @@ impl<
     async fn reply_with_input_report(&mut self) -> Result<(), Error<Bus::Error>> {
         if self.resources.pending_reset {
             info!("Processing first input report read after reset");
+            // We need to acknowledge that we've completed a reset by writing back 0's - see section 7.2.1 of the HID spec
             Self::write_bus(
                 &mut self.resources.bus,
                 self.resources.device_response_timeout,
-                &[00, 00], // Respond with as many 0s as the host requests to acknowledge reset
+                &[00, 00],
             )
             .await?;
 
@@ -678,7 +676,6 @@ impl<
     }
 
     async fn process_command(&mut self) -> Result<(), Error<Bus::Error>> {
-        // TODO emperically it looks like I had this backward but verify in the spec that I'm not missing something here about the order
         let [command_byte, opcode_byte] = {
             let mut command_header_buffer = [0u8; 2];
             Self::read_bus(
@@ -690,12 +687,7 @@ impl<
             command_header_buffer
         };
 
-        let opcode = Opcode::try_from(opcode_byte).map_err(|_| Error::Hid(HidError::InvalidCommand));
-        if opcode.is_err() {
-            error!("Received invalid opcode: {:#x} (command {:#x})", opcode_byte, command_byte);
-        }
-
-        match opcode? {
+        match Opcode::try_from(opcode_byte).map_err(|_| Error::Hid(HidError::InvalidCommand))? {
             Opcode::Reset => {
                 trace!("Processing reset command");
                 self.reset().await;
@@ -722,9 +714,7 @@ impl<
 
                     HidResult::Ok(report) => {
                         // Note: per HID spec, the length field needs to include its own length (2 bytes)
-                        let len_header = (report.data().len() as u16 + 2).to_le_bytes();
-
-                        // TODO make sure this is legal - these shouldn't be split across two transactions but I don't want to have to copy everything to a buffer just to copy it out again?
+                        let len_header = ((report.data().len() + core::mem::size_of::<u16>()) as u16).to_le_bytes();
                         Self::write_bus(
                             &mut self.resources.bus,
                             self.resources.device_response_timeout,
@@ -736,8 +726,7 @@ impl<
                             self.resources.device_response_timeout,
                             report.data(),
                         )
-                        .await
-                        .expect("TODO handle write error");
+                        .await?;
 
                         Ok(())
                     }

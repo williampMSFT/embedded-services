@@ -38,7 +38,6 @@ pub struct HidReport<MaxSize: ArrayLength> {
 }
 
 impl<MaxSize: ArrayLength> HidReport<MaxSize> {
-    // TODO come up with a better error type for failure here
     pub fn new(id: ReportId, data: &[u8]) -> Result<Self, generic_array::LengthError> {
         Ok(Self {
             id,
@@ -171,18 +170,8 @@ pub trait HidDevice {
         report: &SetHidReport<Self::OutputReportMaxSize, Self::FeatureReportMaxSize>,
     ) -> HidResult<()>;
 
-    /// This is for 'unsolicited' reports - user is responsible for polling this thing and sending it up.
-    /// This function blocks until a report is ready.
-    // TODO either remove this or switch back to it
-    // async fn next_report(&mut self) -> HidResult<Self::InputReport>; // TODO what if this trait just returned an embassy_sync::channel::Receiver? that would let us wait on it directly instead of needing two queues? Alternatively,  split into try_receive and ready_to_receive and have receive return an error if empty
-
     /// This is for 'unsolicited' reports - user is responsible for polling this and sending it up.
     fn receiver(&mut self) -> Self::ReportReceiver<'_>;
-
-    // TODO - what if we changed this to be fn wait_for_input_report(&mut self) and get_unsolicited_report(&mut self) -> HidResult<Self::InputReport> ?? I think this lets us dodge a copy in the case where we're doing passthrough because we won't need to copy between queues?  Although - does this actually buy us anything, or do we get what we want by using a non-Channel receiver implementation in the macro?
-    // // Blocks until the device has an unsolicited input report that it wants to send to the host.
-    // async fn wait_for_input_report(&mut self) -> HidResult<()>;
-    // async fn get_input_report(&mut self) -> HidResult<Self::InputReport>;
 
     /// Called when the host commands a particular power state.
     async fn set_power_state(&mut self, state: HidDevicePowerState) -> HidResult<()>;

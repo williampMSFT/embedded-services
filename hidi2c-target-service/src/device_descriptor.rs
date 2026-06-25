@@ -2,8 +2,8 @@ use embedded_services::relay::hid;
 use hid::HidReport;
 use typenum::marker_traits::Unsigned;
 
-// TODO comments are currently taken directly from spec, clean up wording based on types (e.g. we know it's unsigned, it's a u16...)
-/// HID descriptor
+/// HID descriptor as specified in section 5.1 of the HID-I2C spec. Not to be confused with a HID report descriptor, which
+/// expresses the report types that the HID device can handle.  Field descriptions are taken directly from the HID-I2C spec.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::Immutable)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -51,7 +51,21 @@ pub struct DeviceDescriptor {
     reserved: [u8; 4],
 }
 
-pub struct VendorId(pub u16); // TODO can't be 0
+pub struct VendorId(u16);
+impl VendorId {
+    pub const fn new(vendor_id: u16) -> Option<Self> {
+        if vendor_id == 0 {
+            None
+        } else {
+            Some(Self(vendor_id))
+        }
+    }
+
+    pub const fn value(&self) -> u16 {
+        self.0
+    }
+}
+
 pub struct ProductId(pub u16);
 pub struct VersionId(pub u16);
 
@@ -66,7 +80,6 @@ impl DeviceDescriptor {
         w_version_id: VersionId,
     ) -> Self {
         // TODO validate the following:
-        // - Vendor ID is nonzero
         // - Command registers are unique
         const HID_I2C_PROTOCOL_VERSION: u16 = 0x0100;
         Self {
@@ -80,7 +93,7 @@ impl DeviceDescriptor {
             w_max_output_length: HidDevice::OutputReportMaxSize::USIZE as u16, // TODO figure out if this is the right place to assert that the descriptor matches the constants; also, maybe this should come from the dynamic descriptor?
             w_command_register: crate::HidI2cRegister::Command.into(),
             w_data_register: crate::HidI2cRegister::Data.into(),
-            w_vendor_id: w_vendor_id.0,
+            w_vendor_id: w_vendor_id.value(),
             w_product_id: w_product_id.0,
             w_version_id: w_version_id.0,
             reserved: [0; 4],

@@ -61,12 +61,12 @@ struct MouseReport {
     y: i8,
 }
 
-struct MockTouchpadService {
+struct MockMouseService {
     // Signal a click
     channel: embassy_sync::channel::Channel<embedded_services::GlobalRawMutex, MouseReport, 3>,
 }
 
-impl MockTouchpadService {
+impl MockMouseService {
     pub async fn send_click(&self) {
         // Mouse down
         let send_result = self.channel.try_send(MouseReport {
@@ -107,11 +107,11 @@ impl MockTouchpadService {
 }
 
 // TODO if this pattern is going to be common, maybe write a generic struct to do it
-struct TouchpadNotificationHidReceiver<'a> {
+struct MouseNotificationHidReceiver<'a> {
     receiver: embassy_sync::channel::Receiver<'a, embedded_services::GlobalRawMutex, MouseReport, 3>,
 }
 
-impl<'a, MaxSize: generic_array::ArrayLength> ReportReceiver<MaxSize> for TouchpadNotificationHidReceiver<'a> {
+impl<'a, MaxSize: generic_array::ArrayLength> ReportReceiver<MaxSize> for MouseNotificationHidReceiver<'a> {
     async fn ready_to_receive(&self) {
         self.receiver.ready_to_receive().await
     }
@@ -127,13 +127,13 @@ impl<'a, MaxSize: generic_array::ArrayLength> ReportReceiver<MaxSize> for Touchp
     }
 }
 
-struct MockTouchpadHidRelay<'s> {
-    service: &'s MockTouchpadService,
+struct MockMouseHidRelay<'s> {
+    service: &'s MockMouseService,
     descriptor: HidReportDescriptor,
 }
 
-impl<'s> MockTouchpadHidRelay<'s> {
-    pub fn new(service: &'s MockTouchpadService) -> Self {
+impl<'s> MockMouseHidRelay<'s> {
+    pub fn new(service: &'s MockMouseService) -> Self {
         Self {
             service,
             descriptor: HidReportDescriptor::new_static(MOUSE_HID_REPORT_DESCRIPTOR),
@@ -141,13 +141,13 @@ impl<'s> MockTouchpadHidRelay<'s> {
     }
 }
 
-impl embedded_services::relay::hid::HidDevice for MockTouchpadHidRelay<'_> {
+impl embedded_services::relay::hid::HidDevice for MockMouseHidRelay<'_> {
     type InputReportMaxSize = typenum::U3; // TODO figure out real number
     type OutputReportMaxSize = typenum::U0; // TODO figure out real number
     type FeatureReportMaxSize = typenum::U0; // TODO figure out real number
 
     /// The type that will surface HID reports as they become available.
-    type ReportReceiver<'a> = TouchpadNotificationHidReceiver<'a > where Self: 'a;
+    type ReportReceiver<'a> = MouseNotificationHidReceiver<'a > where Self: 'a;
 
     const MAX_REPORT_COUNT: u8 = 10; // TODO figure out real number
 
@@ -188,7 +188,7 @@ impl embedded_services::relay::hid::HidDevice for MockTouchpadHidRelay<'_> {
     }
 
     fn receiver(&mut self) -> Self::ReportReceiver<'_> {
-        TouchpadNotificationHidReceiver{receiver: self.service.receiver()}
+        MouseNotificationHidReceiver{receiver: self.service.receiver()}
     }
 
     async fn set_power_state(&mut self, state: HidDevicePowerState) -> HidResult<()> {
@@ -209,7 +209,7 @@ bind_interrupts!(struct Irqs {
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_imxrt::init(Default::default());
-    info!("HID-I2C mock touchpad example starting...");
+    info!("HID-I2C mock mouse example starting...");
     // TODO @Felipe if I specify the slave address here, why do I also receive it as an argument in the trait?
     let i2c = I2cSlave::new_async(p.FLEXCOMM2, p.PIO0_18, p.PIO0_17, Irqs, SLAVE_ADDR.unwrap(), p.DMA0_CH4).unwrap();
 
@@ -218,13 +218,13 @@ async fn main(spawner: Spawner) {
     let mut interrupt_pin = gpio::Output::new(
         p.PIO0_28,
         gpio::Level::High,
-        gpio::DriveMode::OpenDrain, // TODO I'm not confident this is correct; figure out what the right settings are for the interrupt line
+        gpio::DriveMode::OpenDrain,
         gpio::DriveStrength::Normal,
         gpio::SlewRate::Standard,
     );
 
-    static TOUCHPAD_SERVICE: StaticCell<MockTouchpadService> = StaticCell::new();
-    let touchpad_service = TOUCHPAD_SERVICE.init(MockTouchpadService {
+    static MOUSE_SERVICE: StaticCell<MockMouseService> = StaticCell::new();
+    let mouse_service = MOUSE_SERVICE.init(MockMouseService {
         channel: embassy_sync::channel::Channel::new(),
     });
 
@@ -254,14 +254,14 @@ async fn main(spawner: Spawner) {
 
     let _hidsvc = odp_service_common::spawn_service!(
         spawner,
-        hidi2c_target_service::Service<'static, I2cSlave<'static, Async>, gpio::Output<'static>, MockTouchpadHidRelay<'static>>,
+        hidi2c_target_service::Service<'static, I2cSlave<'static, Async>, gpio::Output<'static>, MockMouseHidRelay<'static>>,
         |resources| hidi2c_target_service::Service::new(
             resources,
             hidi2c_target_service::InitParams {
                 bus: i2c,
                 attn_pin: interrupt_pin,
-                hid_device: MockTouchpadHidRelay::new(touchpad_service),
-                vendor_id: hidi2c_target_service::VendorId(0x1234), // TODO pick a real vendor ID
+                hid_device: MockMouseHidRelay::new(mouse_service),
+                vendor_id: hidi2c_target_service::VendorId::new(0x1234).unwrap(), // TODO pick a real vendor ID
                 product_id: hidi2c_target_service::ProductId(0x5678), // TODO pick a real product ID
                 version_id: hidi2c_target_service::VersionId(0x0001), // TODO pick a real version number
                 device_response_timeout: embassy_time::Duration::from_secs(1), // TODO figure out what a reasonable timeout is here
@@ -275,8 +275,8 @@ async fn main(spawner: Spawner) {
     embassy_time::Timer::after(embassy_time::Duration::from_secs(10)).await;
 
     loop {
-        info!("clicking touchpad");
-        touchpad_service.send_click().await;
+        info!("clicking mouse");
+        mouse_service.send_click().await;
         embassy_time::Timer::after(embassy_time::Duration::from_millis(2000)).await;
     }
 }
@@ -285,7 +285,7 @@ async fn main(spawner: Spawner) {
 
 
 
-// Below is an attempt at using the touchpad HID descriptor provided on the hardware integration site. TBD if it's necessary for this demo - it's a lot more complicated than I'd like...
+// Below is an attempt at using the mouse HID descriptor provided on the hardware integration site. TBD if it's necessary for this demo - it's a lot more complicated than I'd like...
 
 
 
@@ -293,7 +293,7 @@ async fn main(spawner: Spawner) {
 
 
 
-// // This descriptor is taken directly from https://learn.microsoft.com/en-us/windows-hardware/design/component-guidelines/touchpad-sample-report-descriptors
+// // This descriptor is taken directly from https://learn.microsoft.com/en-us/windows-hardware/design/component-guidelines/mouse-sample-report-descriptors
 // // Report IDs are arbitrary for this example.
 // //
 // const REPORTID_TOUCHPAD: u8 = 1;
