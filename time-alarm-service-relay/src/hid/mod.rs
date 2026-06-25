@@ -8,18 +8,19 @@ type MaxReportSize = typenum::U20; // TODO figure out the actual max report size
 const MAX_PENDING_MESSAGES: usize = 10; // TODO maybe we should take this as a const generic parameter?
 
 pub struct TimeAlarmHidRelay<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blocking_mutex::raw::RawMutex> {
-    service: T,
+    _service: T,
     channel: embassy_sync::channel::Channel<M, HidResult<HidReport<MaxReportSize>>, MAX_PENDING_MESSAGES>, // TODO figure out the right size for this buffer
     report_descriptor: HidReportDescriptor
 }
 
 impl <T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blocking_mutex::raw::RawMutex> TimeAlarmHidRelay<T, M> {
-    pub fn new(service: T) -> Self {
-        Self {
-            service,
-            channel: embassy_sync::channel::Channel::new(),
-            report_descriptor: todo!()
-        }
+    pub fn new(_service: T) -> Self {
+        // Self {
+        //     service,
+        //     channel: embassy_sync::channel::Channel::new(),
+        //     report_descriptor: todo!()
+        // }
+        todo!()
     }
 }
 
@@ -48,14 +49,14 @@ impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blockin
 
     async fn get_report(
         &mut self,
-        report_id: ReportId,
+        _report_id: ReportId,
     ) -> HidResult<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>> {
         todo!()
     }
 
     async fn set_report(
         &mut self,
-        report: &SetHidReport<Self::OutputReportMaxSize, Self::FeatureReportMaxSize>,
+        _report: &SetHidReport<Self::OutputReportMaxSize, Self::FeatureReportMaxSize>,
     ) -> HidResult<()> {
         todo!()
     }
@@ -64,7 +65,7 @@ impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blockin
         self.channel.receiver()
     }
 
-    async fn set_power_state(&mut self, state: HidDevicePowerState) -> HidResult<()> {
+    async fn set_power_state(&mut self, _state: HidDevicePowerState) -> HidResult<()> {
         HidResult::Ok(())
     }
 

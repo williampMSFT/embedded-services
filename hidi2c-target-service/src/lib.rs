@@ -258,35 +258,47 @@ impl<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: 
 }
 
 
-// TODO should this be a trait or something, or do we want to require open-drain active low?
-struct AttnPinHandler<AttnPin: embedded_hal::digital::OutputPin> {
-    attn_pin: AttnPin,
-    asserted: bool
+/// Handler for the ATTN pin, which is used to signal the host that we have an input report ready to be read.
+/// This is a simple wrapper around an OutputPin that tracks whether we've asserted the interrupt or not, because
+/// OutputPin doesn't have a built-in way to interrogate its own state.
+///
+mod attn_pin_handler {
+    use super::*;
+    pub struct AttnPinHandler<AttnPin: embedded_hal::digital::OutputPin> {
+        attn_pin: AttnPin,
+        asserted: bool
+    }
+
+    impl<AttnPin: embedded_hal::digital::OutputPin> AttnPinHandler<AttnPin> {
+        /// Construct a new handler that owns the provided GPIO hardware
+        pub fn new(attn_pin: AttnPin) -> Self {
+            let mut result = Self { attn_pin, asserted: false};
+            result.clear_interrupt().unwrap_or_else(|_| error!("HID-I2C: Failed to clear interrupt on attn pin"));
+            result
+        }
+
+        /// Clear the interrupt, which is done by setting the pin high.
+        pub fn clear_interrupt(&mut self) -> Result<(), AttnPin::Error> {
+            trace!("ATTN: clear interrupt");
+            self.asserted = false;
+            self.attn_pin.set_high()
+        }
+
+        /// Assert the interrupt, which is done by pulling the pin low.
+        pub fn assert_interrupt(&mut self) -> Result<(), AttnPin::Error> {
+            trace!("ATTN: assert interrupt");
+            self.asserted = true;
+            self.attn_pin.set_low()
+        }
+
+        /// Returns true if we are asserting the interrupt, false otherwise.
+        pub fn asserted(&self) -> bool {
+            self.asserted
+        }
+    }
 }
+use attn_pin_handler::AttnPinHandler;
 
-impl<AttnPin: embedded_hal::digital::OutputPin> AttnPinHandler<AttnPin> {
-    fn new(attn_pin: AttnPin) -> Self {
-        let mut result = Self { attn_pin, asserted: false};
-        result.clear_interrupt();
-        result
-    }
-
-    fn clear_interrupt(&mut self) -> Result<(), AttnPin::Error> {
-        trace!("ATTN: clear interrupt");
-        self.asserted = false;
-        self.attn_pin.set_high()
-    }
-
-    fn assert_interrupt(&mut self) -> Result<(), AttnPin::Error> {
-        trace!("ATTN: assert interrupt");
-        self.asserted = true;
-        self.attn_pin.set_low()
-    }
-
-    fn asserted(&self) -> bool {
-        self.asserted
-    }
-}
 
 struct ServiceResources<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice>
 {
@@ -367,9 +379,6 @@ impl<
                         trace!("Host issued write command: {:?}", write_status);
                     }
                     Ok(bytes)
-                }
-                Ok(WriteStatus::BufferFull(bytes)) => {
-                    panic!("Host issued write command: BufferFull({})", bytes); // TODO figure out what we should really do here
                 }
                 Err(e) => {
                     error!("Error during bus read"); // TODO figure out debug tracing bound
