@@ -215,7 +215,7 @@ async fn main(spawner: Spawner) {
 
     // GPIO on P0_28.
     use embassy_imxrt::gpio;
-    let mut interrupt_pin = gpio::Output::new(
+    let mut attn_pin = gpio::Output::new(
         p.PIO0_28,
         gpio::Level::High,
         gpio::DriveMode::OpenDrain,
@@ -257,22 +257,18 @@ async fn main(spawner: Spawner) {
         hidi2c_target_service::Service<'static, I2cSlave<'static, Async>, gpio::Output<'static>, MockMouseHidRelay<'static>>,
         |resources| hidi2c_target_service::Service::new(
             resources,
-            hidi2c_target_service::InitParams {
-                bus: i2c,
-                attn_pin: interrupt_pin,
-                hid_device: MockMouseHidRelay::new(mouse_service),
-                hwinfo: hidi2c_target_service::HardwareVersionInfo {
-                    vendor_id: hidi2c_target_service::VendorId::new(0x1234).unwrap(), // TODO pick a real vendor ID
-                    product_id: hidi2c_target_service::ProductId(0x5678), // TODO pick a real product ID
-                    version_id: hidi2c_target_service::VersionId(0x0001), // TODO pick a real version number
-                },
-                device_response_timeout: embassy_time::Duration::from_secs(1), // TODO figure out what a reasonable timeout is here
-                data_read_timeout: embassy_time::Duration::from_secs(1), // TODO figure out what a reasonable timeout is here
-            }
+            i2c,
+            attn_pin,
+            MockMouseHidRelay::new(mouse_service),
+            hidi2c_target_service::HardwareVersionInfo {
+                vendor_id: hidi2c_target_service::VendorId::new(0x1234).unwrap(), // TODO pick a real vendor ID
+                product_id: hidi2c_target_service::ProductId(0x5678), // TODO pick a real product ID
+                version_id: hidi2c_target_service::VersionId(0x0001), // TODO pick a real version number
+            },
+            hidi2c_target_service::TimeoutSettings::default()
         )
     );
 
-    // TODO I have some sort of race
     info!("Waiting 10s before starting to send inputs");
     embassy_time::Timer::after(embassy_time::Duration::from_secs(10)).await;
 

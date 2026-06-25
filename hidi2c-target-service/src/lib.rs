@@ -810,12 +810,16 @@ impl<
 {
     pub async fn new(
         storage: &'hw mut Resources<Bus, AttnPin, HidDevice>,
-        params: InitParams<Bus, AttnPin, HidDevice>,
-        // TODO this is probably not supposed to be infallible
+        bus: Bus,
+        attn_pin: AttnPin,
+        hid_device: HidDevice,
+        hwinfo: HardwareVersionInfo,
+        timeout_settings: TimeoutSettings
+        // TODO we may not want this to be infallible? figure out an error type
     ) -> Result<(Self, Runner<'hw, Bus, AttnPin, HidDevice>), core::convert::Infallible> {
         let device_descriptor = DeviceDescriptor::new(
-            &params.hid_device,
-            params.hwinfo,
+            &hid_device,
+            hwinfo,
         );
 
         let service_resources = storage.service_resources.insert(ServiceResources {
@@ -825,12 +829,12 @@ impl<
         });
 
         let runner_resources = storage.runner_resources.insert(RunnerResources::new(
-            params.bus,
-            params.attn_pin,
-            params.hid_device,
+            bus,
+            attn_pin,
+            hid_device,
             device_descriptor,
-            params.device_response_timeout,
-            params.data_read_timeout,
+            timeout_settings.device_response_timeout,
+            timeout_settings.data_read_timeout,
         ));
 
         Ok((
@@ -844,7 +848,6 @@ impl<
     }
 }
 
-
 impl<
     'hw,
     Bus: I2cTargetAsync + 'hw,
@@ -856,19 +859,19 @@ impl<
     type Resources = Resources<Bus, AttnPin, HidDevice>;
 }
 
-// TODO probably get rid of this and just use params directly, maybe struct some of these that are defaultable
-pub struct InitParams<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice> {
-    pub bus: Bus,
-    pub attn_pin: AttnPin,
-    pub hid_device: HidDevice,
-
-    pub hwinfo: HardwareVersionInfo,
-
-    // TODO figure out why these were different on the prior impl
-    // TODO figure out if we should have these in a sub-struct so they're easier to default or something
-    // TODO maybe we can do something like std::bind in the spawn_service macro to not require an InitParams struct? would make using multiple constructors more flexible, I think
+/// Timeout configuration for I2C operations
+pub struct TimeoutSettings {
     /// Timeout for device response reads
     pub device_response_timeout: Duration,
     /// Timeout for data reads from the host.
-    pub data_read_timeout: Duration,
+    pub data_read_timeout: Duration
+}
+
+impl Default for TimeoutSettings {
+    fn default() -> Self {
+        Self {
+            device_response_timeout: Duration::from_secs(1),
+            data_read_timeout: Duration::from_secs(1)
+        }
+    }
 }
