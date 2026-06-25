@@ -261,9 +261,11 @@ async fn main(spawner: Spawner) {
                 bus: i2c,
                 attn_pin: interrupt_pin,
                 hid_device: MockMouseHidRelay::new(mouse_service),
-                vendor_id: hidi2c_target_service::VendorId::new(0x1234).unwrap(), // TODO pick a real vendor ID
-                product_id: hidi2c_target_service::ProductId(0x5678), // TODO pick a real product ID
-                version_id: hidi2c_target_service::VersionId(0x0001), // TODO pick a real version number
+                hwinfo: hidi2c_target_service::HardwareVersionInfo {
+                    vendor_id: hidi2c_target_service::VendorId::new(0x1234).unwrap(), // TODO pick a real vendor ID
+                    product_id: hidi2c_target_service::ProductId(0x5678), // TODO pick a real product ID
+                    version_id: hidi2c_target_service::VersionId(0x0001), // TODO pick a real version number
+                },
                 device_response_timeout: embassy_time::Duration::from_secs(1), // TODO figure out what a reasonable timeout is here
                 data_read_timeout: embassy_time::Duration::from_secs(1), // TODO figure out what a reasonable timeout is here
             }

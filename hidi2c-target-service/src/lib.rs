@@ -22,7 +22,7 @@ use zerocopy::IntoBytes;
 
 mod device_descriptor;
 use device_descriptor::DeviceDescriptor;
-pub use device_descriptor::{ProductId, VendorId, VersionId};
+pub use device_descriptor::{HardwareVersionInfo, ProductId, VendorId, VersionId};
 
 //  HID errors
 #[derive(Clone, Copy, Debug)]
@@ -815,9 +815,7 @@ impl<
     ) -> Result<(Self, Runner<'hw, Bus, AttnPin, HidDevice>), core::convert::Infallible> {
         let device_descriptor = DeviceDescriptor::new(
             &params.hid_device,
-            params.vendor_id,
-            params.product_id,
-            params.version_id,
+            params.hwinfo,
         );
 
         let service_resources = storage.service_resources.insert(ServiceResources {
@@ -864,9 +862,7 @@ pub struct InitParams<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::Outpu
     pub attn_pin: AttnPin,
     pub hid_device: HidDevice,
 
-    pub vendor_id: VendorId,
-    pub product_id: ProductId,
-    pub version_id: VersionId,
+    pub hwinfo: HardwareVersionInfo,
 
     // TODO figure out why these were different on the prior impl
     // TODO figure out if we should have these in a sub-struct so they're easier to default or something

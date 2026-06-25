@@ -51,6 +51,12 @@ pub struct DeviceDescriptor {
     reserved: [u8; 4],
 }
 
+pub struct HardwareVersionInfo {
+    pub vendor_id: VendorId,
+    pub product_id: ProductId,
+    pub version_id: VersionId,
+}
+
 pub struct VendorId(u16);
 impl VendorId {
     pub const fn new(vendor_id: u16) -> Option<Self> {
@@ -75,9 +81,7 @@ impl DeviceDescriptor {
     // TODO this thing seems like it should be partially generatable from a report descriptor (max sizes)? maybe we make some of these private and consume them that way
     pub fn new<HidDevice: hid::HidDevice>(
         hid_device: &HidDevice,
-        w_vendor_id: VendorId,
-        w_product_id: ProductId,
-        w_version_id: VersionId,
+        hwinfo: HardwareVersionInfo,
     ) -> Self {
         // TODO validate the following:
         // - Command registers are unique
@@ -93,9 +97,9 @@ impl DeviceDescriptor {
             w_max_output_length: HidDevice::OutputReportMaxSize::USIZE as u16, // TODO figure out if this is the right place to assert that the descriptor matches the constants; also, maybe this should come from the dynamic descriptor?
             w_command_register: crate::HidI2cRegister::Command.into(),
             w_data_register: crate::HidI2cRegister::Data.into(),
-            w_vendor_id: w_vendor_id.value(),
-            w_product_id: w_product_id.0,
-            w_version_id: w_version_id.0,
+            w_vendor_id: hwinfo.vendor_id.value(),
+            w_product_id: hwinfo.product_id.0,
+            w_version_id: hwinfo.version_id.0,
             reserved: [0; 4],
         }
     }
