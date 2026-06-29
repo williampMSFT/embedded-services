@@ -81,6 +81,15 @@ impl<OutputMaxSize: ArrayLength, FeatureMaxSize: ArrayLength> SetHidReport<Outpu
     }
 }
 
+/// A type of report that can be requested by the host
+pub enum GetHidReportType {
+    /// The host has requested an input report
+    Input,
+
+    /// The host has requested a feature report
+    Feature,
+}
+
 /// HID report types supported by the GetReport operation.
 pub enum GetHidReport<InputMaxSize: ArrayLength, FeatureMaxSize: ArrayLength> {
     /// An input report
@@ -184,6 +193,7 @@ pub trait HidDevice {
     /// Respond to an explicit request for a particular report from the host. You must fill `out` with the report data.
     fn get_report(
         &mut self,
+        report_type: GetHidReportType,
         report_id: ReportId,
     ) -> impl core::future::Future<Output = HidResult<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>>>; // TODO: I believe the Rust compiler will do RVO for this, but verify in compiler explorer
 

@@ -4,8 +4,8 @@
 // TODO rm
 #![warn(warnings)]
 #![allow(dead_code)]
-#![allow(unused_variables)]
-#![allow(unused_imports)]
+// #![allow(unused_variables)]
+// #![allow(unused_imports)]
 
 use core::marker::PhantomData;
 use embassy_time::{Duration, with_timeout};
@@ -14,7 +14,7 @@ use embedded_mcu_hal::i2c::target::Request;
 use embedded_mcu_hal::i2c::target::WriteStatus;
 use embedded_mcu_hal::i2c::target::asynch::I2c as I2cTargetAsync;
 use embedded_services::relay::hid;
-use embedded_services::relay::hid::{GetHidReport, HidReport, HidResult, ReportReceiver, SetHidReport};
+use embedded_services::relay::hid::{HidReport, HidResult, ReportReceiver, SetHidReport, GetHidReportType};
 use embedded_services::{error, info, trace, warn};
 use generic_array::ArrayLength;
 use typenum::Max;
@@ -185,6 +185,16 @@ enum HidI2cReportType {
     Input,
     Output,
     Feature,
+}
+
+impl HidI2cReportType {
+    fn to_get_type(&self) -> Option<GetHidReportType> {
+        match self {
+            HidI2cReportType::Input => Some(GetHidReportType::Input),
+            HidI2cReportType::Feature => Some(GetHidReportType::Feature),
+            HidI2cReportType::Output => None,
+        }
+    }
 }
 
 struct HidI2cReportCommandHeader {
@@ -548,7 +558,6 @@ impl<
             }
             HidI2cRegister::Input => self.process_input_report_read().await,
             HidI2cRegister::Output => {
-                // TODO I don't understand why both this and the "output" command exist. Why would a host send one or the other? They seem equivalent? Should probably share some parts of impl
                 self.process_output_report_write().await
             }
             HidI2cRegister::Command => self.process_command().await,
@@ -741,7 +750,7 @@ impl<
                 trace!("Processing get report command");
 
                 let (report_type, report_id) = self.get_command_report_header(command_byte).await?;
-                match self.resources.hid_device.get_report(report_id).await {
+                match self.resources.hid_device.get_report(report_type.to_get_type().ok_or(Error::Hid(HidError::InvalidCommand))?, report_id).await {
                     HidResult::TriggerReset => {
                         trace!("Triggering reset due to GetReport failure");
                         self.reset().await;

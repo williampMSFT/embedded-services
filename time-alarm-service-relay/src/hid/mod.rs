@@ -47,6 +47,7 @@ impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blockin
 
     async fn get_report(
         &mut self,
+        _report_type: GetHidReportType,
         _report_id: ReportId,
     ) -> HidResult<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>> {
         todo!()

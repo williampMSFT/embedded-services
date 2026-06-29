@@ -5,7 +5,7 @@
 use defmt::info;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
-use embassy_imxrt::i2c::slave::{Address, Command, I2cSlave};
+use embassy_imxrt::i2c::slave::{Address, I2cSlave};
 use embassy_imxrt::i2c::{self, Async};
 use embassy_imxrt::{bind_interrupts, peripherals};
 use static_cell::StaticCell;
@@ -68,8 +68,12 @@ pub struct KeyboardInputReport {
     pub keys: [u8; 6],
 }
 
-const NUMLOCK_KEY_CODE: u8 = 0x53;
-const A_KEY_CODE: u8 = 0x04;
+#[allow(dead_code)]
+#[repr(u8)]
+enum KeyCode {
+    NumLock = 0x53,
+    A = 0x04,
+}
 
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy, defmt::Format, zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::Immutable)]
@@ -161,6 +165,7 @@ impl embedded_services::relay::hid::HidDevice for MockKeyboardHidRelay<'_> {
 
     async fn get_report(
         &mut self,
+        _report_type: GetHidReportType,
         report_id: ReportId,
     ) -> HidResult<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>> {
         info!("Received command to get report with ID {:?}", report_id);
@@ -187,7 +192,7 @@ impl embedded_services::relay::hid::HidDevice for MockKeyboardHidRelay<'_> {
             SetHidReport::Output(r) => {
                 match r.id() {
                     ReportId(REPORTID_KEYBOARD) => {
-                        let output_report = KeyboardOutputReport::read_from(r.data()).unwrap();
+                        let output_report = KeyboardOutputReport::read_from_bytes(r.data()).unwrap();
                         info!("Received keyboard output report: {:?}", output_report);
                     }
                     _ => {
@@ -229,7 +234,7 @@ async fn main(spawner: Spawner) {
 
     // GPIO on P0_28.
     use embassy_imxrt::gpio;
-    let mut attn_pin = gpio::Output::new(
+    let attn_pin = gpio::Output::new(
         p.PIO0_28,
         gpio::Level::High,
         gpio::DriveMode::OpenDrain,
@@ -288,7 +293,7 @@ async fn main(spawner: Spawner) {
 
     loop {
         info!("pressing key");
-        keyboard_service.click_key(NUMLOCK_KEY_CODE).await;
+        keyboard_service.click_key(KeyCode::NumLock as u8).await;
         embassy_time::Timer::after(embassy_time::Duration::from_millis(2000)).await;
     }
 }

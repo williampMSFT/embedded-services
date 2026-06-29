@@ -5,7 +5,7 @@
 use defmt::info;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
-use embassy_imxrt::i2c::slave::{Address, Command, I2cSlave};
+use embassy_imxrt::i2c::slave::{Address, I2cSlave};
 use embassy_imxrt::i2c::{self, Async};
 use embassy_imxrt::{bind_interrupts, peripherals};
 use static_cell::StaticCell;
@@ -50,7 +50,9 @@ const MOUSE_HID_REPORT_DESCRIPTOR: &[u8] = &[
 ];
 
 const MOUSE_BUTTON_1: u8 = 0x01;
+#[allow(dead_code)]
 const MOUSE_BUTTON_2: u8 = 0x02;
+#[allow(dead_code)]
 const MOUSE_BUTTON_3: u8 = 0x04; 
 
 #[repr(C)]
@@ -76,7 +78,7 @@ impl MockMouseService {
         });
 
         if let Err(e) = send_result {
-            warn!("Failed to send click report: {:?}", e);
+            warn!("Failed to send mouse down report: {:?}", e);
         }
 
         embassy_time::Timer::after(embassy_time::Duration::from_millis(15)).await;
@@ -87,8 +89,13 @@ impl MockMouseService {
             x: 0,
             y: 0,
         });
+
+        if let Err(e) = send_result {
+            warn!("Failed to send mouse up report: {:?}", e);
+        }
     }
 
+    #[allow(dead_code)]
     pub fn move_mouse(&self) {
         let send_result = self.channel.try_send(MouseReport {
             buttons: MOUSE_BUTTON_1,
@@ -157,6 +164,7 @@ impl embedded_services::relay::hid::HidDevice for MockMouseHidRelay<'_> {
 
     async fn get_report(
         &mut self,
+        _report_type: GetHidReportType,
         report_id: ReportId,
     ) -> HidResult<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>> {
         info!("Received command to get report with ID {:?}", report_id);
@@ -215,7 +223,7 @@ async fn main(spawner: Spawner) {
 
     // GPIO on P0_28.
     use embassy_imxrt::gpio;
-    let mut attn_pin = gpio::Output::new(
+    let attn_pin = gpio::Output::new(
         p.PIO0_28,
         gpio::Level::High,
         gpio::DriveMode::OpenDrain,

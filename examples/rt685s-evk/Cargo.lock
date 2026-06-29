@@ -845,7 +845,6 @@ dependencies = [
  "embedded-mcu-hal",
  "embedded-services",
  "generic-array",
- "heapless 0.9.3",
  "num_enum",
  "odp-service-common",
  "typenum",

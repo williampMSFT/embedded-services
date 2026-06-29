@@ -1,5 +1,4 @@
 use embedded_services::relay::hid;
-use hid::HidReport;
 use typenum::marker_traits::Unsigned;
 
 /// HID descriptor as specified in section 5.1 of the HID-I2C spec. Not to be confused with a HID report descriptor, which
@@ -51,14 +50,17 @@ pub struct DeviceDescriptor {
     reserved: [u8; 4],
 }
 
+/// Hardware identifiers for the HID-I2C device
 pub struct HardwareVersionInfo {
     pub vendor_id: VendorId,
     pub product_id: ProductId,
     pub version_id: VersionId,
 }
 
+/// Vendor ID, as assigned by the USB Implementers Forum (USB-IF).  Must be non-zero.
 pub struct VendorId(u16);
 impl VendorId {
+    /// Creates a new VendorId.  Returns None if the vendor_id is invalid (i.e. zero).
     pub const fn new(vendor_id: u16) -> Option<Self> {
         if vendor_id == 0 {
             None
@@ -67,15 +69,25 @@ impl VendorId {
         }
     }
 
+    /// The numeric value of the Vendor ID.
     pub const fn value(&self) -> u16 {
         self.0
     }
 }
 
+/// Product ID, as assigned by the device manufacturer.
 pub struct ProductId(pub u16);
+
+/// Version ID, as assigned by the device manufacturer. Recommended to be in BCD format, e.g. 0x0100 for version 1.00.
 pub struct VersionId(pub u16);
 
+/// The number of bytes in a HID report header, which consists of a 2-byte length field.
 pub const HID_REPORT_HEADER_SIZE_BYTES: u16 = 2;
+
+/// The number of bytes in a HID report ID field, which consists of a 1-byte report ID.
+/// This field is only used if more than one report of any type is exposed by the HID device (i.e. you can
+/// have a single input report, a single output report, and a single feature report and not need this, but
+/// as soon as you add a second of any one of those you need this).
 pub const HID_REPORT_ID_SIZE_BYTES: u16 = 1;
 
 impl DeviceDescriptor {
@@ -83,9 +95,6 @@ impl DeviceDescriptor {
         hid_device: &HidDevice,
         hwinfo: HardwareVersionInfo,
     ) -> Self {
-        // TODO validate the following:
-        // - Command registers are unique
-
         const HID_I2C_PROTOCOL_VERSION: u16 = 0x0100;
         Self {
             w_hid_desc_length: core::mem::size_of::<DeviceDescriptor>() as u16,
