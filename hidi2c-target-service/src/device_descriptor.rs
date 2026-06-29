@@ -75,7 +75,8 @@ impl VendorId {
 pub struct ProductId(pub u16);
 pub struct VersionId(pub u16);
 
-pub const HID_INPUT_REPORT_HEADER_SIZE_BYTES: u16 = 3;
+pub const HID_INPUT_REPORT_HEADER_SIZE_BYTES: u16 = 2;
+pub const HID_INPUT_REPORT_ID_SIZE_BYTES: u16 = 1;
 
 impl DeviceDescriptor {
     // TODO this thing seems like it should be partially generatable from a report descriptor (max sizes)? maybe we make some of these private and consume them that way
@@ -85,6 +86,8 @@ impl DeviceDescriptor {
     ) -> Self {
         // TODO validate the following:
         // - Command registers are unique
+
+        // TODO here we need to figure out if inputs are implicit and if yes set their length
         const HID_I2C_PROTOCOL_VERSION: u16 = 0x0100;
         Self {
             w_hid_desc_length: core::mem::size_of::<DeviceDescriptor>() as u16,
@@ -92,7 +95,7 @@ impl DeviceDescriptor {
             w_report_desc_length: hid_device.report_descriptor().as_bytes().len() as u16,
             w_report_desc_register: crate::HidI2cRegister::ReportDescriptor as u16,
             w_input_register: crate::HidI2cRegister::Input.into(),
-            w_max_input_length: HidDevice::InputReportMaxSize::USIZE as u16 + HID_INPUT_REPORT_HEADER_SIZE_BYTES, // TODO figure out if this is the right place to assert that the descriptor matches the constants; also, maybe this should come from the dynamic descriptor?
+            w_max_input_length: HidDevice::InputReportMaxSize::USIZE as u16 + HID_INPUT_REPORT_HEADER_SIZE_BYTES + if hid_device.report_descriptor().input_id_is_implicit() { 0 } else { HID_INPUT_REPORT_ID_SIZE_BYTES }, // TODO figure out if this is the right place to assert that the descriptor matches the constants; also, maybe this should come from the dynamic descriptor?
             w_output_register: crate::HidI2cRegister::Output.into(),
             w_max_output_length: HidDevice::OutputReportMaxSize::USIZE as u16, // TODO figure out if this is the right place to assert that the descriptor matches the constants; also, maybe this should come from the dynamic descriptor?
             w_command_register: crate::HidI2cRegister::Command.into(),

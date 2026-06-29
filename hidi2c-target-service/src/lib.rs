@@ -611,14 +611,24 @@ impl<
                 //        We don't currently handle this case because we don't have the HID report parsing library implemented yet; once we
                 //        write that, we can use it here to figure out if we're in 'single report' mode and omit the report ID in that case.
                 //
-                let [size_low, size_high] = (report.data().len() as u16 + device_descriptor::HID_INPUT_REPORT_HEADER_SIZE_BYTES).to_le_bytes();
+                let size_bytes = report.data().len() as u16 +
+                                 device_descriptor::HID_INPUT_REPORT_HEADER_SIZE_BYTES +
+                                if self.resources.hid_device.report_descriptor().input_id_is_implicit() { 0 } 
+                                else { device_descriptor::HID_INPUT_REPORT_ID_SIZE_BYTES };
+                let [size_low, size_high] = size_bytes.to_le_bytes();
                 let header = [size_low, size_high, report.id().0];
 
-                trace!("Responding with input report {}: {:x} {:x}", report.id(), header, report.data());
+                let header_slice = if self.resources.hid_device.report_descriptor().input_id_is_implicit() {
+                    header.get(..2).expect("We know header is 3 bytes because we just declared it")
+                } else {
+                    &header
+                };
+
+                trace!("Responding with input report {}: {:x} {:x}", report.id(), header_slice, report.data());
                 Self::write_bus_unterminated(
                     &mut self.resources.bus,
                     self.resources.device_response_timeout,
-                    &header
+                    header_slice
                 )
                 .await?;
 
@@ -639,20 +649,20 @@ impl<
 
     async fn process_output_report_write(&mut self) -> Result<(), Error<Bus::Error>> {
         let mut write_header_buf = [0u8; 3];
+        let mut header_buf_slice = if self.resources.hid_device.report_descriptor().output_id_is_implicit() {
+            // NOTE: If there is no report ID because we only have one report, we call it 0.
+            write_header_buf.get_mut(..2).expect("We know buffer is 3 bytes because we just declared it")
+        } else {
+            &mut write_header_buf
+        };
+
         Self::read_bus(
             &mut self.resources.bus,
             self.resources.data_read_timeout,
-            &mut write_header_buf,
+            &mut header_buf_slice,
         )
         .await?;
 
-        // TODO - in the case where the device we're representing gives us a report descriptor that does not specify report IDs,
-        //        the report ID is supposed to be omitted.  This is only possible on devices that have no more than one HID report of
-        //        each class (i.e. can have a single input report and and a single output report).
-        //
-        //        We don't currently handle this case because we don't have the HID report parsing library implemented yet; once we
-        //        write that, we can use it here to figure out if we're in 'single report' mode and omit the report ID in that case.
-        //
         let [len_low, len_high, report_id] = write_header_buf;
         let length = u16::from_le_bytes([len_low, len_high]);
         trace!("Reading {} bytes", length);
@@ -663,6 +673,7 @@ impl<
             &mut self.resources.write_buf,
         )
         .await?;
+
         if read_result != length as usize {
             error!("Expected to read {} bytes but got {}", length, read_result);
             return Err(Error::Hid(HidError::InvalidSize));

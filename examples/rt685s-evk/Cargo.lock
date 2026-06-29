@@ -672,6 +672,7 @@ dependencies = [
  "generic-array",
  "heapless 0.9.3",
  "mctp-rs",
+ "num_enum",
  "paste",
  "portable-atomic",
  "serde",

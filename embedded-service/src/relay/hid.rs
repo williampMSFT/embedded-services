@@ -1,6 +1,7 @@
 //! HID relay code
 
 use generic_array::{ArrayLength, GenericArray};
+use num_enum::TryFromPrimitive;
 
 // TODO read over comments and make sure they're still true when we go to check in
 // TODO some of this may belong in some sort of external "HID support" library (e.g. stuff to manipulate HID descriptors)
@@ -217,20 +218,106 @@ pub trait HidDevice {
 
 /// A HID report descriptor
 pub struct HidReportDescriptor {
-    bytes: &'static [u8] // TODO this probably doesn't work in the passthrough case; may need to be generic over a size/lifetime or have some sort of buffer type or lifetime annotation or something
+    bytes: &'static [u8], // TODO this probably doesn't work in the passthrough case; may need to be generic over a size/lifetime or have some sort of buffer type or lifetime annotation or something
+
+    /// Whether or not the input report ID is implicit in the report descriptor. If true, the report ID is not sent to the host as part of the report header.
+    /// This is only possible on devices that have no more than one input report.
+    input_id_is_implicit: bool,
+
+    /// Whether or not the output report ID is implicit in the report descriptor. If true, the report ID is not sent to the host as part of the report header.
+    /// This is only possible on devices that have no more than one output report.
+    output_id_is_implicit: bool,
+
+    /// Whether or not the feature report ID is implicit in the report descriptor. If true, the report ID is not sent to the host as part of the report header.
+    /// This is only possible on devices that have no more than one feature report.
+    feature_id_is_implicit: bool,
+}
+
+struct HidReportDescriptorElementHeader(u8);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive)]
+#[repr(u8)]
+enum HidItemType {
+    Main = 0,
+    Global = 1,
+    Local = 2,
+    Reserved = 3,
+}
+
+impl HidReportDescriptorElementHeader {
+    /// The size of this item in bytes.
+    fn item_size(&self) -> usize {
+        if self.0 == 0b11111110 {
+            panic!("Long items are not yet supported"); // TODO implement - see 6.2.2.3 of https://www.usb.org/sites/default/files/hid1_11.pdf
+        }
+
+        match self.0 & 0b11 {
+            0 => 0,
+            1 => 1,
+            2 => 2,
+            3 => 4, // per hid spec, size=3 means 4 bytes, not 3 bytes. See section 6.2.2.2 of https://www.usb.org/sites/default/files/hid1_11.pdf
+            _ => unreachable!(),
+        }
+    }
+
+    /// The type of the item, which is one of Main, Global, Local, or Reserved.
+    fn item_type(&self) -> HidItemType {
+        HidItemType::try_from_primitive((self.0 >> 2) & 0b11).expect("HidItemType::try_from_primitive should never fail because we mask to 2 bits")
+    }
+
+    /// The tag of this item, which is a 4-bit value that identifies the specific item within its type (e.g. start collection, end collection, input, output, etc)
+    fn item_tag(&self) -> u8 {
+        self.0 >> 4
+    }
 }
 
 impl HidReportDescriptor {
+    /// Constructs a HID descriptor from a statically computed and allocated byte slice.
+    /// TODO this is a hack for bootstrap until we have a HID support library that can codegen one of these from a bunch of annotated structs or something.
+    pub fn new_static(bytes: &'static [u8]) -> Self {
+        // TODO validate that this is a well-formed HID report descriptor and that all reports are byte-aligned and whatnot - that'll be part of the hid support library.
+        //      alternatively, could just get rid of this when we have the HID support library and have this codegenned or something
+
+        // TODO this is a hack until we get the hid report descriptor library implemented that assumes that either all or no report IDs are implicit.
+        let mut iter = bytes.iter();
+        let mut implicit = true;
+        while let Some(header_bytes) = iter.next() {
+            const REPORT_ID_ITEM_TAG: u8 = 0b1000; // per section 6.2.2.7
+            let header = HidReportDescriptorElementHeader(*header_bytes);
+            if header.item_type() == HidItemType::Global && header.item_tag() == REPORT_ID_ITEM_TAG {
+                implicit = false;
+                break;
+            }
+
+            if header.item_size() != 0 {
+                iter.nth(header.item_size() - 1); // skip over the data bytes for this item
+            }
+        }
+
+        Self { bytes, input_id_is_implicit: implicit, output_id_is_implicit: implicit, feature_id_is_implicit: implicit }
+    }
+
     /// Returns the raw bytes of the HID report descriptor. This is what will be sent to the host when it requests the HID descriptor.
     pub fn as_bytes(&self) -> &[u8] {
         self.bytes
     }
 
-    /// Constructs a HID descriptor from a statically computed and allocated byte slice. // TODO this is a hack for bootstrap until we have a HID support library that can codegen one of these from a bunch of annotated structs or something.
-    pub fn new_static(bytes: &'static [u8]) -> Self {
-        // TODO validate that this is a well-formed HID report descriptor and that all reports are byte-aligned and whatnot - that'll be part of the hid support library.
-        //      alternatively, could just get rid of this when we have the HID support library and have this codegenned or something
-        Self { bytes }
+    /// Whether or not the input report ID is implicit in the report descriptor. If true, the report ID is not sent to the host as part of the report header.
+    /// This is only possible on devices that have no more than one input report.
+    pub fn input_id_is_implicit(&self) -> bool {
+        self.input_id_is_implicit
+    }
+
+    /// Whether or not the output report ID is implicit in the report descriptor. If true, the report ID is not sent to the host as part of the report header.
+    /// This is only possible on devices that have no more than one output report.
+    pub fn output_id_is_implicit(&self) -> bool {
+        self.output_id_is_implicit
+    }
+
+    /// Whether or not the feature report ID is implicit in the report descriptor. If true, the report ID is not sent to the host as part of the report header.
+    /// This is only possible on devices that have no more than one feature report. 
+    pub fn feature_id_is_implicit(&self) -> bool {
+        self.feature_id_is_implicit
     }
 }
 

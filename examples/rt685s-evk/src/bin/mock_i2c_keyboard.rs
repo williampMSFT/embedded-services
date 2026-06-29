@@ -18,12 +18,12 @@ use embedded_services::warn;
 const SLAVE_ADDR: Option<Address> = Address::new(0x15);
 
 // This is adapted from the example keyboard HID descriptor packaged with the DT.exe tool / https://learn.microsoft.com/en-us/windows-hardware/design/component-guidelines/keyboard-collection-report-descriptor
-const REPORTID_KEYBOARD: u8 = 1; // We're not specifying a report ID in the descriptor, but the default is 0
+const REPORTID_KEYBOARD: u8 = 0; // We're not specifying a report ID in the descriptor, but the default is 0
 const KEYBOARD_HID_REPORT_DESCRIPTOR: &[u8] = &[
     0x05, 0x01,                    // USAGE_PAGE (Generic Desktop)
     0x09, 0x06,                    // USAGE (Keyboard)
     0xa1, 0x01,                    // COLLECTION (Application)
-    0x85, REPORTID_KEYBOARD,            //   REPORT_ID (keyboard) *** THIS IS MY INSERT
+    // 0x85, REPORTID_KEYBOARD,            //   REPORT_ID (keyboard) // Enable this if we need to support more than one report of any type
     0x05, 0x07,                    //   USAGE_PAGE (Keyboard)
     0x19, 0xe0,                    //   USAGE_MINIMUM (Keyboard LeftControl)
     0x29, 0xe7,                    //   USAGE_MAXIMUM (Keyboard Right GUI)
