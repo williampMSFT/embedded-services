@@ -10,7 +10,7 @@ use embassy_imxrt::i2c::{self, Async};
 use embassy_imxrt::{bind_interrupts, peripherals};
 use static_cell::StaticCell;
 use panic_probe as _;
-use zerocopy::IntoBytes;
+use zerocopy::{IntoBytes, FromBytes};
 use embedded_services::relay::hid::*;
 
 use embedded_services::warn;
@@ -18,12 +18,12 @@ use embedded_services::warn;
 const SLAVE_ADDR: Option<Address> = Address::new(0x15);
 
 // This is adapted from the example keyboard HID descriptor packaged with the DT.exe tool / https://learn.microsoft.com/en-us/windows-hardware/design/component-guidelines/keyboard-collection-report-descriptor
-const REPORTID_KEYBOARD: u8 = 0; // We're not specifying a report ID in the descriptor, but the default is 0
+const REPORTID_KEYBOARD: u8 = 0; // If we don't specify a report ID in our descriptor, the transport service will use report ID 0, which is normally not a valid report ID.
 const KEYBOARD_HID_REPORT_DESCRIPTOR: &[u8] = &[
     0x05, 0x01,                    // USAGE_PAGE (Generic Desktop)
     0x09, 0x06,                    // USAGE (Keyboard)
     0xa1, 0x01,                    // COLLECTION (Application)
-    // 0x85, REPORTID_KEYBOARD,            //   REPORT_ID (keyboard) // Enable this if we need to support more than one report of any type
+    // 0x85, REPORTID_KEYBOARD,            //   REPORT_ID (keyboard) // Enable this if we need to support more than one report of any type; if you do, set REPORTID_KEYBOARD to be nonzero.
     0x05, 0x07,                    //   USAGE_PAGE (Keyboard)
     0x19, 0xe0,                    //   USAGE_MINIMUM (Keyboard LeftControl)
     0x29, 0xe7,                    //   USAGE_MAXIMUM (Keyboard Right GUI)
@@ -184,10 +184,20 @@ impl embedded_services::relay::hid::HidDevice for MockKeyboardHidRelay<'_> {
         report: &SetHidReport<Self::OutputReportMaxSize, Self::FeatureReportMaxSize>,
     ) -> HidResult<()> {
         match report {
-            SetHidReport::Output(r) => info!("Received command to set output report with ID {:?}", r.id()),
+            SetHidReport::Output(r) => {
+                match r.id() {
+                    ReportId(REPORTID_KEYBOARD) => {
+                        let output_report = KeyboardOutputReport::read_from(r.data()).unwrap();
+                        info!("Received keyboard output report: {:?}", output_report);
+                    }
+                    _ => {
+                        info!("Report ID {:?} not recognized", r.id());
+                        return HidResult::TriggerReset;
+                    }
+                }
+            },
             SetHidReport::Feature(r) => info!("Received command to set feature report with ID {:?}", r.id()),
         }
-        info!("SET_REPORT NOT IMPLEMENTED"); // TODO implement this if we need it
         HidResult::Ok(())
     }
 

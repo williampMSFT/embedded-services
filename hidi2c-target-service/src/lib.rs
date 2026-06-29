@@ -612,9 +612,9 @@ impl<
                 //        write that, we can use it here to figure out if we're in 'single report' mode and omit the report ID in that case.
                 //
                 let size_bytes = report.data().len() as u16 +
-                                 device_descriptor::HID_INPUT_REPORT_HEADER_SIZE_BYTES +
+                                 device_descriptor::HID_REPORT_HEADER_SIZE_BYTES +
                                 if self.resources.hid_device.report_descriptor().input_id_is_implicit() { 0 } 
-                                else { device_descriptor::HID_INPUT_REPORT_ID_SIZE_BYTES };
+                                else { device_descriptor::HID_REPORT_ID_SIZE_BYTES };
                 let [size_low, size_high] = size_bytes.to_le_bytes();
                 let header = [size_low, size_high, report.id().0];
 
@@ -656,6 +656,8 @@ impl<
             &mut write_header_buf
         };
 
+        let header_len = header_buf_slice.len();
+
         Self::read_bus(
             &mut self.resources.bus,
             self.resources.data_read_timeout,
@@ -664,7 +666,7 @@ impl<
         .await?;
 
         let [len_low, len_high, report_id] = write_header_buf;
-        let length = u16::from_le_bytes([len_low, len_high]);
+        let length = u16::from_le_bytes([len_low, len_high]) as usize - header_len; // Note: per HID spec, the length field needs to include its own length (2 bytes) and the report ID (1 byte)
         trace!("Reading {} bytes", length);
 
         let read_result = Self::read_bus(
