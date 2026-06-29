@@ -378,6 +378,7 @@ impl<
     HidDevice: ConstrainedHidDevice + 'hw,
 > Runner<'hw, Bus, AttnPin, HidDevice>
 {
+    // TODO these are going to need to be tweaked when felipe's fix to the i2c trait goes in
     // TODO these are associated functions because `buffer` is often using a borrow on self (i.e. read_bus(self.bus, self.buffer), but this feels a bit awkward. figure out if there's a more ergonomic way to describe this pattern
     async fn read_bus(bus: &mut Bus, timeout: Duration, buffer: &mut [u8]) -> Result<usize, Error<Bus::Error>> {
         match with_timeout(timeout, bus.respond_to_write(buffer)).await {
@@ -603,6 +604,13 @@ impl<
             HidResult::Ok(report) => {
                 info!("Got report to return - listening to bus for read request");
 
+                // TODO - in the case where the device we're representing gives us a report descriptor that does not specify report IDs,
+                //        the report ID is supposed to be omitted.  This is only possible on devices that have no more than one HID report of
+                //        each class (i.e. can have a single input report and and a single output report).
+                //
+                //        We don't currently handle this case because we don't have the HID report parsing library implemented yet; once we
+                //        write that, we can use it here to figure out if we're in 'single report' mode and omit the report ID in that case.
+                //
                 let [size_low, size_high] = (report.data().len() as u16 + device_descriptor::HID_INPUT_REPORT_HEADER_SIZE_BYTES).to_le_bytes();
                 let header = [size_low, size_high, report.id().0];
 
@@ -638,6 +646,13 @@ impl<
         )
         .await?;
 
+        // TODO - in the case where the device we're representing gives us a report descriptor that does not specify report IDs,
+        //        the report ID is supposed to be omitted.  This is only possible on devices that have no more than one HID report of
+        //        each class (i.e. can have a single input report and and a single output report).
+        //
+        //        We don't currently handle this case because we don't have the HID report parsing library implemented yet; once we
+        //        write that, we can use it here to figure out if we're in 'single report' mode and omit the report ID in that case.
+        //
         let [len_low, len_high, report_id] = write_header_buf;
         let length = u16::from_le_bytes([len_low, len_high]);
         trace!("Reading {} bytes", length);
@@ -708,6 +723,7 @@ impl<
                 self.reset().await;
                 Ok(())
             }
+
             Opcode::SetPower => {
                 trace!("Processing set power command");
                 let power_state =
