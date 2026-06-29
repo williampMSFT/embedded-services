@@ -339,16 +339,11 @@ impl<
 {
     async fn run(mut self) -> embedded_services::Never {
         loop {
-            // TODO this feels a little weird? we have to construct a receiver every time to avoid running afoul of the borrow checker when
-            //      we try to use another method on the HidDevice. Receiver is cheap to construct (it's really just a pointer-to-channel),
-            //      but it seems a bit odd and if someone wanted to use another non-embassy_sync::Channel type to implement this it might be
-            //      expensive, not sure. we may want to consider doing some sort of 'split(&mut self)' function that returns a receiver and
-            //      a control handle or something so we can borrow both pieces of the underlying struct at the same time?
             let event = {
                 let receiver = self.resources.hid_device.receiver();
                 let listen_future = self.resources.bus.listen();
-                // If we've raised the interrupt, we know it won't go down again until it's serviced, so we don't need to
-                // wait for it
+                // If we've raised the interrupt, we know it won't be dismissed again until it's serviced by the host reading
+                // the input report, so we don't need to listen for another notification
                 if self.resources.attn_pin.asserted() {
                     embassy_futures::select::Either::First(listen_future.await)
                 }
@@ -360,7 +355,6 @@ impl<
                 embassy_futures::select::Either::First(bus_request) => {
                     trace!("Processing request from host");
                     self.process_request(bus_request.expect("TODO handle error recovery")).await;
-                    trace!("Done processing request from host"); // TODO rm
                 }
                 embassy_futures::select::Either::Second(()) => {
                     trace!("Signalling host that we have an input report ready");
@@ -456,9 +450,7 @@ impl<
                 Ok(result) => result.map_err(|_| Error::Hid(HidError::Timeout)),
             };
 
-            // TODO is this the right thing to do?
             if let Ok(Request::RepeatedStart(_a)) = result {
-                info!("Received repeated start; ignoring");
                 continue;
             }
 
@@ -859,7 +851,6 @@ impl<
         hid_device: HidDevice,
         hwinfo: HardwareVersionInfo,
         timeout_settings: TimeoutSettings
-        // TODO we may not want this to be infallible? figure out an error type
     ) -> Result<(Self, Runner<'hw, Bus, AttnPin, HidDevice>), core::convert::Infallible> {
         let device_descriptor = DeviceDescriptor::new(
             &hid_device,

@@ -16,7 +16,6 @@ embedded-hal.workspace = true
 embedded-mcu-hal.workspace = true
 embedded-services.workspace = true
 generic-array.workspace = true
-heapless.workspace = true                              # TODO may not use this?
 num_enum.workspace = true
 odp-service-common.workspace = true
 typenum.workspace = true

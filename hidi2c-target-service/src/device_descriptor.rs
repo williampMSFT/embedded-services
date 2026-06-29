@@ -79,7 +79,6 @@ pub const HID_REPORT_HEADER_SIZE_BYTES: u16 = 2;
 pub const HID_REPORT_ID_SIZE_BYTES: u16 = 1;
 
 impl DeviceDescriptor {
-    // TODO this thing seems like it should be partially generatable from a report descriptor (max sizes)? maybe we make some of these private and consume them that way
     pub fn new<HidDevice: hid::HidDevice>(
         hid_device: &HidDevice,
         hwinfo: HardwareVersionInfo,
@@ -87,7 +86,6 @@ impl DeviceDescriptor {
         // TODO validate the following:
         // - Command registers are unique
 
-        // TODO here we need to figure out if inputs are implicit and if yes set their length
         const HID_I2C_PROTOCOL_VERSION: u16 = 0x0100;
         Self {
             w_hid_desc_length: core::mem::size_of::<DeviceDescriptor>() as u16,
