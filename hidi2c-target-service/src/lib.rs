@@ -11,7 +11,7 @@ use embedded_mcu_hal::i2c::target::Request;
 use embedded_mcu_hal::i2c::target::WriteStatus;
 use embedded_mcu_hal::i2c::target::asynch::I2c as I2cTargetAsync;
 use embedded_services::relay::hid;
-use embedded_services::relay::hid::{HidReport, ReportReceiver, SetHidReport, GetHidReportType};
+use embedded_services::relay::hid::{HidReport, ReportReceiver, SetHidReport, GetHidReportType, HidError};
 use embedded_services::{error, info, trace, warn};
 use generic_array::ArrayLength;
 use typenum::Max;
@@ -24,32 +24,19 @@ pub use device_descriptor::{HardwareVersionInfo, ProductId, VendorId, VersionId}
 //  HID errors
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum ProtocolError {
-    // TODO prune for usage
+enum ProtocolError {
     /// Invalid data
     InvalidData,
     /// Invalid size
     InvalidSize,
     /// Invalid register address
     InvalidRegisterAddress,
-    /// Invalid device
-    InvalidDevice,
     /// Invalid command
     InvalidCommand,
-    /// Command requires a report ID
-    RequiresReportId,
-    /// Command requires data
-    RequiresData,
     /// Invalid report type for command
     InvalidReportType,
-    /// Invalid report frequency
-    InvalidReportFreq,
-    /// Error from transport service
-    Transport,
     /// Timeout
     Timeout,
-    /// Errors from serialization/deserialization
-    Serialize,
 }
 
 #[allow(dead_code)] // Dead code analysis ignores Debug, which is what we want the detail for
@@ -639,7 +626,7 @@ impl<
                 Ok(())
 
             }
-            Err(hid::HidError::TriggerReset) => {
+            Err(HidError::TriggerReset) => {
                 self.reset().await;
                 Err(Error::Protocol(ProtocolError::InvalidCommand)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
             }
@@ -689,7 +676,7 @@ impl<
 
         match self.resources.hid_device.set_report(&output_report).await {
             Ok(_) => Ok(()), // No response to host in success case
-            Err(hid::HidError::TriggerReset) => {
+            Err(HidError::TriggerReset) => {
                 self.reset().await;
                 Err(Error::Protocol(ProtocolError::InvalidCommand)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
             }
@@ -751,7 +738,7 @@ impl<
 
                 let (report_type, report_id) = self.get_command_report_header(command_byte).await?;
                 match self.resources.hid_device.get_report(report_type.to_get_type().ok_or(Error::Protocol(ProtocolError::InvalidCommand))?, report_id).await {
-                    Err(hid::HidError::TriggerReset) => {
+                    Err(HidError::TriggerReset) => {
                         trace!("Triggering reset due to GetReport failure");
                         self.reset().await;
                         Err(Error::Protocol(ProtocolError::Timeout)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
@@ -822,7 +809,7 @@ impl<
                 };
 
                 match self.resources.hid_device.set_report(&set_report).await {
-                    Err(hid::HidError::TriggerReset) => {
+                    Err(HidError::TriggerReset) => {
                         trace!("Triggering reset due to HID result timeout");
                         self.reset().await;
                         Err(Error::Protocol(ProtocolError::InvalidCommand)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
