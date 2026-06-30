@@ -3,9 +3,6 @@
 #![no_std]
 // TODO rm
 #![warn(warnings)]
-// #![allow(dead_code)]
-// #![allow(unused_variables)]
-// #![allow(unused_imports)]
 
 use core::marker::PhantomData;
 use embassy_time::{Duration, with_timeout};
@@ -55,12 +52,13 @@ pub enum HidError {
     Serialize,
 }
 
+#[allow(dead_code)] // Dead code analysis ignores Debug, which is what we want the detail for
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum Error<BusError> {
     /// Error from the underlying bus
     Bus(BusError),
-    // HID error
+    /// HID error
     Hid(HidError),
 }
 
@@ -479,13 +477,12 @@ impl<
         //
         match request {
             Request::Write(_address) => {
-                self.process_register_access().await.expect("TODO handle error correctly");
-                // if let Err(e) = result {
-                //     error!("Error processing register access");
-                // }
+                if let Err(e) = self.process_register_access().await {
+                    error!("Error processing register access: {}", e);
+                }
             }
             Request::Read(_address) => {
-                info!("HID-I2C: Host requested input report");
+                trace!("HID-I2C: Host requested input report");
                 self.reply_with_input_report().await.expect("TODO handle error correctly");
             }
 
