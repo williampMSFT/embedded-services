@@ -150,9 +150,9 @@ impl<'s> MockKeyboardHidRelay<'s> {
 }
 
 impl embedded_services::relay::hid::HidDevice for MockKeyboardHidRelay<'_> {
-    type InputReportMaxSize = typenum::U8; // TODO figure out real number
-    type OutputReportMaxSize = typenum::U1; // TODO figure out real number
-    type FeatureReportMaxSize = typenum::U0; // TODO figure out real number
+    type InputReportMaxSize = typenum::U8;
+    type OutputReportMaxSize = typenum::U1;
+    type FeatureReportMaxSize = typenum::U0;
 
     /// The type that will surface HID reports as they become available.
     type ReportReceiver<'a> = KeyboardNotificationHidReceiver<'a > where Self: 'a;
@@ -271,7 +271,7 @@ async fn main(spawner: Spawner) {
     // This depends on writing the 'hid support library', though, so for now we're just going to directly use the time-alarm device for testing
     // (pending getting actual hardware to test on, implementing I2C traits for embassy, etc).
 
-    let _hidsvc = odp_service_common::spawn_service!(
+    let mut hidsvc = odp_service_common::spawn_service!(
         spawner,
         hidi2c_target_service::Service<'static, I2cSlave<'static, Async>, gpio::Output<'static>, MockKeyboardHidRelay<'static>>,
         |resources| hidi2c_target_service::Service::new(
@@ -286,15 +286,21 @@ async fn main(spawner: Spawner) {
             },
             hidi2c_target_service::TimeoutSettings::default()
         )
-    );
+    ).expect("Failed to spawn HID service");
 
     info!("Waiting 10s before starting to send inputs");
     embassy_time::Timer::after(embassy_time::Duration::from_secs(10)).await;
 
+    let mut i = 0;
     loop {
         info!("pressing key");
         keyboard_service.click_key(KeyCode::NumLock as u8).await;
         embassy_time::Timer::after(embassy_time::Duration::from_millis(2000)).await;
+        i += 1;
+        if i % 5 == 0 {
+            defmt::warn!("Manually triggering reset of HID service after 5 clicks to test reset handling");
+            hidsvc.reset();
+        }
     }
 }
 

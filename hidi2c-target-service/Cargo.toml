@@ -11,6 +11,7 @@ defmt = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
 
 embassy-futures.workspace = true
+embassy-sync.workspace = true
 embassy-time.workspace = true
 embedded-hal.workspace = true
 embedded-mcu-hal.workspace = true

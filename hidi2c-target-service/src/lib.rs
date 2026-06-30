@@ -3,7 +3,7 @@
 #![no_std]
 // TODO rm
 #![warn(warnings)]
-#![allow(dead_code)]
+// #![allow(dead_code)]
 // #![allow(unused_variables)]
 // #![allow(unused_imports)]
 
@@ -226,7 +226,7 @@ impl HidI2cReportCommandHeader {
 /// Memory required for the HID-I2C target service.
 pub struct Resources<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice> {
     runner_resources: Option<RunnerResources<Bus, AttnPin, HidDevice>>,
-    service_resources: Option<ServiceResources<Bus, AttnPin, HidDevice>>,
+    service_resources: Option<ServiceResources>,
 }
 
 impl<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice> Default
@@ -247,7 +247,6 @@ struct RunnerResources<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::Outp
     device_descriptor: DeviceDescriptor,
 
     // Read/write buffers.
-    read_buf: generic_array::GenericArray<u8, HidDevice::MaxInputOrFeatureSize>,
     write_buf: generic_array::GenericArray<u8, HidDevice::MaxOutputOrFeatureSize>,
 
     device_response_timeout: Duration,
@@ -274,7 +273,6 @@ impl<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: 
             attn_pin: AttnPinHandler::new(attn_pin),
             hid_device,
             device_descriptor: device_descriptor,
-            read_buf: generic_array::GenericArray::default(),
             write_buf: generic_array::GenericArray::default(),
             device_response_timeout,
             data_read_timeout,
@@ -326,18 +324,15 @@ mod attn_pin_handler {
 use attn_pin_handler::AttnPinHandler;
 
 
-struct ServiceResources<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice>
+struct ServiceResources
 {
-    // TODO figure out if we even need a control handle - maybe we want to allow manual device-initiated reset or something?
-    // TODO I think having all these phantomdatas may be an indication that the RunnableService trait is too constrained, figure out if we need to make changes there?
-    _bus: PhantomData<Bus>,
-    _attn_pin: PhantomData<AttnPin>,
-    _hid_device: PhantomData<HidDevice>,
+    reset_signal: embassy_sync::signal::Signal<embedded_services::GlobalRawMutex, ()>
 }
 
 pub struct Runner<'hw, Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice>
 {
     resources: &'hw mut RunnerResources<Bus, AttnPin, HidDevice>,
+    reset_signal: &'hw embassy_sync::signal::Signal<embedded_services::GlobalRawMutex, ()>,
 }
 
 impl<
@@ -350,25 +345,30 @@ impl<
     async fn run(mut self) -> embedded_services::Never {
         loop {
             let event = {
-                let receiver = self.resources.hid_device.receiver();
-                let listen_future = self.resources.bus.listen();
                 // If we've raised the interrupt, we know it won't be dismissed again until it's serviced by the host reading
-                // the input report, so we don't need to listen for another notification
-                if self.resources.attn_pin.asserted() {
-                    embassy_futures::select::Either::First(listen_future.await)
-                }
-                else {
-                    embassy_futures::select::select(listen_future, receiver.ready_to_receive()).await
-                }
+                // the input report, so we don't need to listen for another notification. 
+                let receiver = self.resources.hid_device.receiver();
+                let input_report_ready_future = async {
+                    if self.resources.attn_pin.asserted() {
+                        core::future::pending::<()>().await
+                    } else {
+                        receiver.ready_to_receive().await
+                    }
+                };
+                embassy_futures::select::select3(self.resources.bus.listen(), input_report_ready_future, self.reset_signal.wait()).await
             };
             match event {
-                embassy_futures::select::Either::First(bus_request) => {
+                embassy_futures::select::Either3::First(bus_request) => {
                     trace!("Processing request from host");
                     self.process_request(bus_request.expect("TODO handle error recovery")).await;
                 }
-                embassy_futures::select::Either::Second(()) => {
+                embassy_futures::select::Either3::Second(()) => {
                     trace!("Signalling host that we have an input report ready");
                     self.resources.attn_pin.assert_interrupt().expect("TODO handle attn pin error");
+                }
+                embassy_futures::select::Either3::Third(()) => {
+                    trace!("Received reset request");
+                    self.reset().await;
                 }
             }
         }
@@ -841,9 +841,13 @@ impl<
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Service<'hw, Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice>
 {
-    resources: &'hw ServiceResources<Bus, AttnPin, HidDevice>,
+    resources: &'hw ServiceResources,
+    _phantom_bus: core::marker::PhantomData<Bus>,
+    _phantom_attn_pin: core::marker::PhantomData<AttnPin>,
+    _phantom_hid_device: core::marker::PhantomData<HidDevice>,
 }
 
 impl<
@@ -866,10 +870,8 @@ impl<
             hwinfo,
         );
 
-        let service_resources = storage.service_resources.insert(ServiceResources {
-            _bus: PhantomData,
-            _attn_pin: PhantomData,
-            _hid_device: PhantomData,
+        let service_resources: &ServiceResources = storage.service_resources.insert(ServiceResources {
+            reset_signal: embassy_sync::signal::Signal::new()
         });
 
         let runner_resources = storage.runner_resources.insert(RunnerResources::new(
@@ -884,11 +886,22 @@ impl<
         Ok((
             Service {
                 resources: service_resources,
+                _phantom_bus: PhantomData,
+                _phantom_attn_pin: PhantomData,
+                _phantom_hid_device: PhantomData,
             },
             Runner {
                 resources: runner_resources,
+                reset_signal: &service_resources.reset_signal,
             },
         ))
+    }
+
+    /// Causes the HID service to perform a device-initiated reset.
+    pub fn reset(
+        &mut self,
+    ) {
+        self.resources.reset_signal.signal(());
     }
 }
 
