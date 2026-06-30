@@ -124,10 +124,10 @@ impl<'a, MaxSize: generic_array::ArrayLength> ReportReceiver<MaxSize> for Keyboa
         self.receiver.ready_to_receive().await
     }
 
-    async fn receive(&self) -> HidResult<HidReport<MaxSize>> {
+    async fn receive(&self) -> Result<HidReport<MaxSize>, HidError> {
         let report = self.receiver.receive().await;
         let hid_report = HidReport::new(ReportId(REPORTID_KEYBOARD), report.as_bytes()).unwrap();
-        HidResult::Ok(hid_report)
+        Ok(hid_report)
     }
 
     fn is_empty(&self) -> bool {
@@ -167,19 +167,19 @@ impl embedded_services::relay::hid::HidDevice for MockKeyboardHidRelay<'_> {
         &mut self,
         _report_type: GetHidReportType,
         report_id: ReportId,
-    ) -> HidResult<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>> {
+    ) -> Result<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>, HidError> {
         info!("Received command to get report with ID {:?}", report_id);
         match report_id {
             ReportId(REPORTID_KEYBOARD) => {
                 let report = KeyboardInputReport::default();
-                HidResult::Ok(GetHidReport::Input(HidReport::<Self::InputReportMaxSize>::new(
+                Ok(GetHidReport::Input(HidReport::<Self::InputReportMaxSize>::new(
                     report_id,
                     report.as_bytes()
                 ).unwrap()))
             }
             _ => {
                 info!("Report ID {:?} not recognized", report_id);
-                HidResult::TriggerReset
+                Err(HidError::TriggerReset)
             }
         }
     }
@@ -187,7 +187,7 @@ impl embedded_services::relay::hid::HidDevice for MockKeyboardHidRelay<'_> {
     async fn set_report(
         &mut self,
         report: &SetHidReport<Self::OutputReportMaxSize, Self::FeatureReportMaxSize>,
-    ) -> HidResult<()> {
+    ) -> Result<(), HidError> {
         match report {
             SetHidReport::Output(r) => {
                 match r.id() {
@@ -197,22 +197,22 @@ impl embedded_services::relay::hid::HidDevice for MockKeyboardHidRelay<'_> {
                     }
                     _ => {
                         info!("Report ID {:?} not recognized", r.id());
-                        return HidResult::TriggerReset;
+                        return Err(HidError::TriggerReset);
                     }
                 }
             },
             SetHidReport::Feature(r) => info!("Received command to set feature report with ID {:?}", r.id()),
         }
-        HidResult::Ok(())
+        Ok(())
     }
 
     fn receiver(&mut self) -> Self::ReportReceiver<'_> {
         KeyboardNotificationHidReceiver{receiver: self.service.receiver()}
     }
 
-    async fn set_power_state(&mut self, state: HidDevicePowerState) -> HidResult<()> {
+    async fn set_power_state(&mut self, state: HidDevicePowerState) -> Result<(), HidError> {
         info!("Received command to set power state to {:?}", state);
-        HidResult::Ok(())
+        Ok(())
     }
 
     async fn host_reset(&mut self) {

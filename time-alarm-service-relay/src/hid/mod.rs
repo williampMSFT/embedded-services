@@ -9,7 +9,7 @@ const MAX_PENDING_MESSAGES: usize = 10; // TODO maybe we should take this as a c
 
 pub struct TimeAlarmHidRelay<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blocking_mutex::raw::RawMutex> {
     _service: T,
-    channel: embassy_sync::channel::Channel<M, HidResult<HidReport<MaxReportSize>>, MAX_PENDING_MESSAGES>, // TODO figure out the right size for this buffer
+    channel: embassy_sync::channel::Channel<M, Result<HidReport<MaxReportSize>, HidError>, MAX_PENDING_MESSAGES>, // TODO figure out the right size for this buffer
     report_descriptor: HidReportDescriptor
 }
 
@@ -36,7 +36,7 @@ impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blockin
     const MAX_REPORT_COUNT: u8 = 10; // TODO figure out how many reports we actually need to support and set this accordingly
 
     type ReportReceiver<'a>
-        = embassy_sync::channel::Receiver<'a, M, HidResult<HidReport<Self::InputReportMaxSize>>, MAX_PENDING_MESSAGES>
+        = embassy_sync::channel::Receiver<'a, M, Result<HidReport<Self::InputReportMaxSize>, HidError>, MAX_PENDING_MESSAGES>
     where
         Self: 'a; // TODO figure out the right size for this buffer
 
@@ -49,14 +49,14 @@ impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blockin
         &mut self,
         _report_type: GetHidReportType,
         _report_id: ReportId,
-    ) -> HidResult<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>> {
+    ) -> Result<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>, HidError> {
         todo!()
     }
 
     async fn set_report(
         &mut self,
         _report: &SetHidReport<Self::OutputReportMaxSize, Self::FeatureReportMaxSize>,
-    ) -> HidResult<()> {
+    ) -> Result<(), HidError> {
         todo!()
     }
 
@@ -64,8 +64,8 @@ impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blockin
         self.channel.receiver()
     }
 
-    async fn set_power_state(&mut self, _state: HidDevicePowerState) -> HidResult<()> {
-        HidResult::Ok(())
+    async fn set_power_state(&mut self, _state: HidDevicePowerState) -> Result<(), HidError> {
+        Ok(())
     }
 
     async fn host_reset(&mut self) {

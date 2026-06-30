@@ -123,10 +123,10 @@ impl<'a, MaxSize: generic_array::ArrayLength> ReportReceiver<MaxSize> for MouseN
         self.receiver.ready_to_receive().await
     }
 
-    async fn receive(&self) -> HidResult<HidReport<MaxSize>> {
+    async fn receive(&self) -> Result<HidReport<MaxSize>, HidError> {
         let report = self.receiver.receive().await;
         let hid_report = HidReport::new(ReportId(REPORTID_MOUSE), report.as_bytes()).unwrap();
-        HidResult::Ok(hid_report)
+        Ok(hid_report)
     }
 
     fn is_empty(&self) -> bool {
@@ -166,19 +166,19 @@ impl embedded_services::relay::hid::HidDevice for MockMouseHidRelay<'_> {
         &mut self,
         _report_type: GetHidReportType,
         report_id: ReportId,
-    ) -> HidResult<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>> {
+    ) -> Result<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>, HidError> {
         info!("Received command to get report with ID {:?}", report_id);
         match report_id {
             ReportId(REPORTID_MOUSE) => {
                 let report = MouseReport::default();
-                HidResult::Ok(GetHidReport::Input(HidReport::<Self::InputReportMaxSize>::new(
+                Ok(GetHidReport::Input(HidReport::<Self::InputReportMaxSize>::new(
                     report_id,
                     report.as_bytes()
                 ).unwrap()))
             }
             _ => {
                 info!("Report ID {:?} not recognized", report_id);
-                HidResult::TriggerReset
+                Err(HidError::TriggerReset)
             }
         }
     }
@@ -186,22 +186,22 @@ impl embedded_services::relay::hid::HidDevice for MockMouseHidRelay<'_> {
     async fn set_report(
         &mut self,
         report: &SetHidReport<Self::OutputReportMaxSize, Self::FeatureReportMaxSize>,
-    ) -> HidResult<()> {
+    ) -> Result<(), HidError> {
         match report {
             SetHidReport::Output(r) => info!("Received command to set output report with ID {:?}", r.id()),
             SetHidReport::Feature(r) => info!("Received command to set feature report with ID {:?}", r.id()),
         }
         info!("SET_REPORT NOT IMPLEMENTED"); // TODO implement this if we need it
-        HidResult::Ok(())
+        Ok(())
     }
 
     fn receiver(&mut self) -> Self::ReportReceiver<'_> {
         MouseNotificationHidReceiver{receiver: self.service.receiver()}
     }
 
-    async fn set_power_state(&mut self, state: HidDevicePowerState) -> HidResult<()> {
+    async fn set_power_state(&mut self, state: HidDevicePowerState) -> Result<(), HidError> {
         info!("Received command to set power state to {:?}", state);
-        HidResult::Ok(())
+        Ok(())
     }
 
     async fn host_reset(&mut self) {

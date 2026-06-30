@@ -11,7 +11,7 @@ use embedded_mcu_hal::i2c::target::Request;
 use embedded_mcu_hal::i2c::target::WriteStatus;
 use embedded_mcu_hal::i2c::target::asynch::I2c as I2cTargetAsync;
 use embedded_services::relay::hid;
-use embedded_services::relay::hid::{HidReport, HidResult, ReportReceiver, SetHidReport, GetHidReportType};
+use embedded_services::relay::hid::{HidReport, ReportReceiver, SetHidReport, GetHidReportType};
 use embedded_services::{error, info, trace, warn};
 use generic_array::ArrayLength;
 use typenum::Max;
@@ -24,7 +24,7 @@ pub use device_descriptor::{HardwareVersionInfo, ProductId, VendorId, VersionId}
 //  HID errors
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum HidError {
+pub enum ProtocolError {
     // TODO prune for usage
     /// Invalid data
     InvalidData,
@@ -58,13 +58,13 @@ pub enum HidError {
 enum Error<BusError> {
     /// Error from the underlying bus
     Bus(BusError),
-    /// HID error
-    Hid(HidError),
+    /// HID protocol error
+    Protocol(ProtocolError),
 }
 
-impl<BusError> From<HidError> for Error<BusError> {
-    fn from(err: HidError) -> Self {
-        Error::Hid(err)
+impl<BusError> From<ProtocolError> for Error<BusError> {
+    fn from(err: ProtocolError) -> Self {
+        Error::Protocol(err)
     }
 }
 
@@ -204,13 +204,13 @@ struct HidI2cReportCommandHeader {
 }
 
 impl HidI2cReportCommandHeader {
-    fn try_from_command_byte(command_byte: u8) -> Result<Self, HidError> {
+    fn try_from_command_byte(command_byte: u8) -> Result<Self, ProtocolError> {
         const HID_I2C_REPORT_TYPE_OFFSET: u8 = 4;
         let report_type = match command_byte >> HID_I2C_REPORT_TYPE_OFFSET {
             0x01 => HidI2cReportType::Input,
             0x02 => HidI2cReportType::Output,
             0x03 => HidI2cReportType::Feature,
-            _ => return Err(HidError::InvalidReportType),
+            _ => return Err(ProtocolError::InvalidReportType),
         };
         let report_id = if command_byte & 0x0F == 0x0F {
             None
@@ -387,7 +387,7 @@ impl<
             Err(_timeout_error) => {
                 error!("Read request timeout");
                 bus.recover().await.expect("TODO handle bus recovery error");
-                Err(Error::Hid(HidError::Timeout))
+                Err(Error::Protocol(ProtocolError::Timeout))
             }
             Ok(write_status) => match write_status {
                 Ok(WriteStatus::Stopped(bytes))
@@ -407,7 +407,7 @@ impl<
                 _ => {
                     error!("Unexpected write status"); // TODO figure out debug tracing bound
                     bus.recover().await.expect("TODO handle bus recovery error");
-                    Err(Error::Hid(HidError::InvalidData))
+                    Err(Error::Protocol(ProtocolError::InvalidData))
                 }
             },
         }
@@ -430,7 +430,7 @@ impl<
             Err(_timeout_error) => {
                 error!("Write request timeout");
                 bus.recover().await.expect("TODO handle bus recovery error");
-                Err(Error::Hid(HidError::Timeout))
+                Err(Error::Protocol(ProtocolError::Timeout))
             }
             Ok(result) => {
                 result.map(|read_status|  {
@@ -453,9 +453,9 @@ impl<
                 Err(_timeout_error) => {
                     error!("Listen request timeout");
                     bus.recover().await.expect("TODO handle bus recovery error");
-                    Err(Error::Hid(HidError::Timeout))
+                    Err(Error::Protocol(ProtocolError::Timeout))
                 }
-                Ok(result) => result.map_err(|_| Error::Hid(HidError::Timeout)),
+                Ok(result) => result.map_err(|_| Error::Protocol(ProtocolError::Timeout)),
             };
 
             if let Ok(Request::RepeatedStart(_a)) = result {
@@ -477,9 +477,10 @@ impl<
         //
         match request {
             Request::Write(_address) => {
-                if let Err(e) = self.process_register_access().await {
-                    error!("Error processing register access: {}", e);
-                }
+                self.process_register_access().await.expect("TODO handle error correctly");
+                // if let Err(e) =  {
+                //     error!("Error processing register access: {}", e);
+                // }
             }
             Request::Read(_address) => {
                 trace!("HID-I2C: Host requested input report");
@@ -508,7 +509,7 @@ impl<
         Self::read_bus(&mut self.resources.bus, self.resources.data_read_timeout, &mut reg).await?;
 
         let register = HidI2cRegister::try_from(u16::from_le_bytes(reg))
-            .map_err(|_| Error::Hid(HidError::InvalidRegisterAddress))?;
+            .map_err(|_| Error::Protocol(ProtocolError::InvalidRegisterAddress))?;
 
         info!("Host requested to access register {:?}", register);
         match register {
@@ -529,7 +530,7 @@ impl<
                     }
                     _ => {
                         error!("Expected read request after device descriptor register access: {:?}", request);
-                        Err(Error::Hid(HidError::InvalidRegisterAddress))
+                        Err(Error::Protocol(ProtocolError::InvalidRegisterAddress))
                     }
                 }
             }
@@ -549,7 +550,7 @@ impl<
                     }
                     _ => {
                         error!("Expected read request after report descriptor register access");
-                        Err(Error::Hid(HidError::InvalidRegisterAddress))
+                        Err(Error::Protocol(ProtocolError::InvalidRegisterAddress))
                     }
                 }
             }
@@ -563,7 +564,7 @@ impl<
                 error!(
                     "Got a data read when we weren't expecting one, those should only come in when we're in the middle of handling a Command register invocation"
                 );
-                Err(Error::Hid(HidError::InvalidRegisterAddress))
+                Err(Error::Protocol(ProtocolError::InvalidRegisterAddress))
             }
         }
     }
@@ -576,7 +577,7 @@ impl<
             self.reply_with_input_report().await
         } else {
             error!("Expected read request after input report register access, got {:?}", read_request);
-            Err(Error::Hid(HidError::InvalidCommand))
+            Err(Error::Protocol(ProtocolError::InvalidCommand))
         }
     }
 
@@ -599,7 +600,7 @@ impl<
 
         let report = self.resources.hid_device.receiver().receive().await; // TODO should we timeout?
         match report {
-            HidResult::Ok(report) => {
+            Ok(report) => {
                 info!("Got report to return - listening to bus for read request");
 
                 // TODO - in the case where the device we're representing gives us a report descriptor that does not specify report IDs,
@@ -638,9 +639,9 @@ impl<
                 Ok(())
 
             }
-            HidResult::TriggerReset => {
+            Err(hid::HidError::TriggerReset) => {
                 self.reset().await;
-                Err(Error::Hid(HidError::InvalidCommand)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
+                Err(Error::Protocol(ProtocolError::InvalidCommand)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
             }
         }
     }
@@ -676,21 +677,21 @@ impl<
 
         if read_result != length as usize {
             error!("Expected to read {} bytes but got {}", length, read_result);
-            return Err(Error::Hid(HidError::InvalidSize));
+            return Err(Error::Protocol(ProtocolError::InvalidSize));
         }
 
         // TODO this makes a copy, which feels bad - figure out if we can make this write directly into the HID report and still be typesafe . maybe some sort of builder type but need to check in compilerexplorer if something like that actually omits the copy
         let output_report = embedded_services::relay::hid::SetHidReport::Output(
             HidReport::new(
             embedded_services::relay::hid::ReportId(report_id),
-            &self.resources.write_buf.get(..length as usize).ok_or(Error::Hid(HidError::InvalidSize))?).map_err(|_| Error::Hid(HidError::InvalidSize) /* TODO figure out if this should just be the err type for hidreport::new */)?,
+            &self.resources.write_buf.get(..length as usize).ok_or(Error::Protocol(ProtocolError::InvalidSize))?).map_err(|_| Error::Protocol(ProtocolError::InvalidSize) /* TODO figure out if this should just be the err type for hidreport::new */)?,
         );
 
         match self.resources.hid_device.set_report(&output_report).await {
-            HidResult::Ok(_) => Ok(()), // No response to host in success case
-            HidResult::TriggerReset => {
+            Ok(_) => Ok(()), // No response to host in success case
+            Err(hid::HidError::TriggerReset) => {
                 self.reset().await;
-                Err(Error::Hid(HidError::InvalidCommand)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
+                Err(Error::Protocol(ProtocolError::InvalidCommand)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
             }
         }
     }
@@ -728,7 +729,7 @@ impl<
             command_header_buffer
         };
 
-        match Opcode::try_from(opcode_byte).map_err(|_| Error::Hid(HidError::InvalidCommand))? {
+        match Opcode::try_from(opcode_byte).map_err(|_| Error::Protocol(ProtocolError::InvalidCommand))? {
             Opcode::Reset => {
                 trace!("Processing reset command");
                 self.reset().await;
@@ -738,8 +739,10 @@ impl<
             Opcode::SetPower => {
                 trace!("Processing set power command");
                 let power_state =
-                    I2cPowerState::try_from(command_byte).map_err(|_| Error::Hid(HidError::InvalidCommand))?;
-                self.resources.hid_device.set_power_state(power_state.into()).await;
+                    I2cPowerState::try_from(command_byte).map_err(|_| Error::Protocol(ProtocolError::InvalidCommand))?;
+                // NOTE: behavior preserved from before the error-handling refactor - the reset request from
+                // set_power_state is intentionally ignored here.
+                let _ = self.resources.hid_device.set_power_state(power_state.into()).await;
                 Ok(())
             }
 
@@ -747,14 +750,14 @@ impl<
                 trace!("Processing get report command");
 
                 let (report_type, report_id) = self.get_command_report_header(command_byte).await?;
-                match self.resources.hid_device.get_report(report_type.to_get_type().ok_or(Error::Hid(HidError::InvalidCommand))?, report_id).await {
-                    HidResult::TriggerReset => {
+                match self.resources.hid_device.get_report(report_type.to_get_type().ok_or(Error::Protocol(ProtocolError::InvalidCommand))?, report_id).await {
+                    Err(hid::HidError::TriggerReset) => {
                         trace!("Triggering reset due to GetReport failure");
                         self.reset().await;
-                        Err(Error::Hid(HidError::Timeout)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
+                        Err(Error::Protocol(ProtocolError::Timeout)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
                     }
 
-                    HidResult::Ok(report) => {
+                    Ok(report) => {
                         // Note: per HID spec, the length field needs to include its own length (2 bytes)
                         let len_header = ((report.data().len() + core::mem::size_of::<u16>()) as u16).to_le_bytes();
                         Self::write_bus(
@@ -793,38 +796,38 @@ impl<
                         .resources
                         .write_buf
                         .get_mut(..report_size as usize)
-                        .ok_or(Error::Hid(HidError::InvalidSize))?,
+                        .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
                 )
                 .await?;
 
                 let set_report = match report_type {
                     HidI2cReportType::Input => {
                         error!("Host attempted to send us an input report, which is invalid");
-                        return Err(Error::Hid(HidError::InvalidReportType));
+                        return Err(Error::Protocol(ProtocolError::InvalidReportType));
                     }
                     HidI2cReportType::Output => SetHidReport::Output(
                         HidReport::new(
                             report_id,
-                            &self.resources.write_buf.get(..report_size as usize).ok_or(Error::Hid(HidError::InvalidSize))?,
+                            &self.resources.write_buf.get(..report_size as usize).ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
                         )
-                        .map_err(|_| Error::Hid(HidError::InvalidSize) /* TODO figure out if this should just be the err type for hidreport::new */)?,
+                        .map_err(|_| Error::Protocol(ProtocolError::InvalidSize) /* TODO figure out if this should just be the err type for hidreport::new */)?,
                     ),
                     HidI2cReportType::Feature => SetHidReport::Feature(
                         HidReport::new(
                             report_id,
-                            &self.resources.write_buf.get(..report_size as usize).ok_or(Error::Hid(HidError::InvalidSize))?,
+                            &self.resources.write_buf.get(..report_size as usize).ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
                         )
-                        .map_err(|_| Error::Hid(HidError::InvalidSize) /* TODO figure out if this should just be the err type for hidreport::new */)?,
+                        .map_err(|_| Error::Protocol(ProtocolError::InvalidSize) /* TODO figure out if this should just be the err type for hidreport::new */)?,
                     ),
                 };
 
                 match self.resources.hid_device.set_report(&set_report).await {
-                    HidResult::TriggerReset => {
+                    Err(hid::HidError::TriggerReset) => {
                         trace!("Triggering reset due to HID result timeout");
                         self.reset().await;
-                        Err(Error::Hid(HidError::InvalidCommand)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
+                        Err(Error::Protocol(ProtocolError::InvalidCommand)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
                     }
-                    HidResult::Ok(_) => Ok(()), // No response to host in success case
+                    Ok(_) => Ok(()), // No response to host in success case
                 }
             }
         }

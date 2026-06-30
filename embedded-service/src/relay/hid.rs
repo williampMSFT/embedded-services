@@ -6,11 +6,13 @@ use num_enum::TryFromPrimitive;
 // TODO read over comments and make sure they're still true when we go to check in
 // TODO some of this may belong in some sort of external "HID support" library (e.g. stuff to manipulate HID descriptors)
 
-/// A result-like type for HID operations. Reporting failure triggers a device-initiated reset, so we force anyone returning an error
-/// to be explicit about it (i.e. not use ? operator).
-pub enum HidResult<T> {
-    /// The operation has completed successfully with the given result.
-    Ok(T),
+/// Errors that a HID device operation can fail with.
+///
+/// Reporting failure triggers a device-initiated reset, so callers must handle these errors explicitly
+/// rather than swallowing them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum HidError {
     /// The operation has failed and a device-initiated reset should be triggered.
     TriggerReset,
 }
@@ -120,19 +122,19 @@ pub trait ReportReceiver<MaxSize: ArrayLength> {
     fn ready_to_receive(&self) -> impl core::future::Future<Output = ()>;
 
     /// Blocks until a report is available and returns it. If the receiver is empty, this will block until a report is available.
-    fn receive(&self) -> impl core::future::Future<Output = HidResult<HidReport<MaxSize>>>;
+    fn receive(&self) -> impl core::future::Future<Output = Result<HidReport<MaxSize>, HidError>>;
 
     /// Returns true if the receiver is empty and there are no reports available to receive.
     fn is_empty(&self) -> bool;
 }
 
 impl<'ch, M: embassy_sync::blocking_mutex::raw::RawMutex, MaxSize: ArrayLength, const N: usize> ReportReceiver<MaxSize>
-    for embassy_sync::channel::Receiver<'ch, M, HidResult<HidReport<MaxSize>>, N>
+    for embassy_sync::channel::Receiver<'ch, M, Result<HidReport<MaxSize>, HidError>, N>
 {
     fn ready_to_receive(&self) -> impl Future<Output = ()> {
         self.ready_to_receive()
     }
-    fn receive(&self) -> impl Future<Output = HidResult<HidReport<MaxSize>>> {
+    fn receive(&self) -> impl Future<Output = Result<HidReport<MaxSize>, HidError>> {
         self.receive()
     }
     fn is_empty(&self) -> bool {
@@ -167,7 +169,7 @@ pub trait HidDevice {
     type FeatureReportMaxSize: ArrayLength;
 
     /// The type that will surface HID reports as they become available.
-    /// In general, default to using `embassy_sync::channel::Receiver<'a, M, HidResult<HidReport<Self::InputReportMaxSize>>, N>`
+    /// In general, default to using `embassy_sync::channel::Receiver<'a, M, Result<HidReport<Self::InputReportMaxSize>, HidError>, N>`
     /// where `N` is some reasonable upper bound on the number of pending reports unless you have a specific reason to do something
     /// else.
     type ReportReceiver<'a>: ReportReceiver<Self::InputReportMaxSize>
@@ -195,19 +197,19 @@ pub trait HidDevice {
         &mut self,
         report_type: GetHidReportType,
         report_id: ReportId,
-    ) -> impl core::future::Future<Output = HidResult<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>>>; // TODO: I believe the Rust compiler will do RVO for this, but verify in compiler explorer
+    ) -> impl core::future::Future<Output = Result<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>, HidError>>; // TODO: I believe the Rust compiler will do RVO for this, but verify in compiler explorer
 
     /// Respond to a command from the host to handle a particular output/feature report.
     fn set_report(
         &mut self,
         report: &SetHidReport<Self::OutputReportMaxSize, Self::FeatureReportMaxSize>,
-    ) -> impl core::future::Future<Output = HidResult<()>>;
+    ) -> impl core::future::Future<Output = Result<(), HidError>>;
 
     /// This is for 'unsolicited' reports - user is responsible for polling this and sending it up.
     fn receiver(&mut self) -> Self::ReportReceiver<'_>;
 
     /// Called when the host commands a particular power state.
-    fn set_power_state(&mut self, state: HidDevicePowerState) -> impl core::future::Future<Output = HidResult<()>>;
+    fn set_power_state(&mut self, state: HidDevicePowerState) -> impl core::future::Future<Output = Result<(), HidError>>;
 
     /// Called when the host commands a reset, or when a peer HidDevice in an aggregate triggers a device-initiated reset.
     fn host_reset(&mut self) -> impl core::future::Future<Output = ()>;
