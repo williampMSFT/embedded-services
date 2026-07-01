@@ -596,7 +596,8 @@ impl<
     }
 
     async fn process_output_report_write(&mut self) -> Result<(), Error<Bus::Error>> {
-        let mut write_header_buf = [0u8; (device_descriptor::HID_REPORT_HEADER_SIZE_BYTES + device_descriptor::HID_REPORT_ID_SIZE_BYTES) as usize];
+        let mut write_header_buf = [0u8; (device_descriptor::HID_REPORT_HEADER_SIZE_BYTES
+            + device_descriptor::HID_REPORT_ID_SIZE_BYTES) as usize];
         let mut header_buf_slice = if self.resources.hid_device.report_descriptor().output_id_is_implicit() {
             // NOTE: If there is no report ID because we only have one report, we call it 0.
             write_header_buf
@@ -703,15 +704,12 @@ impl<
                 let report = self
                     .resources
                     .hid_device
-                    .get_report(
-                        report_type.try_into()?,
-                        report_id,
-                    )
+                    .get_report(report_type.try_into()?, report_id)
                     .await?;
 
                 // Note: per HID spec, the length field needs to include its own length (2 bytes)
                 let len_header =
-                    ((report.data().len() as u16 + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES)).to_le_bytes();
+                    (report.data().len() as u16 + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES).to_le_bytes();
                 Self::write_bus(
                     &mut self.resources.bus,
                     self.resources.device_response_timeout,

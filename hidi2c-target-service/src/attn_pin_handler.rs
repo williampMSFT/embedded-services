@@ -1,4 +1,4 @@
-use crate::{trace, error};
+use crate::{error, trace};
 
 /// Handler for the ATTN pin, which is used to signal the host that we have an input report ready to be read.
 /// This is a simple wrapper around an OutputPin that tracks whether we've asserted the interrupt or not, because

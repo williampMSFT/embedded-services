@@ -7,13 +7,18 @@ type MaxReportSize = typenum::U20; // TODO figure out the actual max report size
 
 const MAX_PENDING_MESSAGES: usize = 10; // TODO maybe we should take this as a const generic parameter?
 
-pub struct TimeAlarmHidRelay<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blocking_mutex::raw::RawMutex> {
+pub struct TimeAlarmHidRelay<
+    T: time_alarm_service_interface::TimeAlarmService,
+    M: embassy_sync::blocking_mutex::raw::RawMutex,
+> {
     _service: T,
     channel: embassy_sync::channel::Channel<M, Result<HidReport<MaxReportSize>, HidError>, MAX_PENDING_MESSAGES>, // TODO figure out the right size for this buffer
-    report_descriptor: HidReportDescriptor
+    report_descriptor: HidReportDescriptor,
 }
 
-impl <T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blocking_mutex::raw::RawMutex> TimeAlarmHidRelay<T, M> {
+impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blocking_mutex::raw::RawMutex>
+    TimeAlarmHidRelay<T, M>
+{
     pub fn new(_service: T) -> Self {
         // Self {
         //     service,
@@ -24,7 +29,9 @@ impl <T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blocki
     }
 }
 
-impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blocking_mutex::raw::RawMutex> HidDevice for TimeAlarmHidRelay<T, M> {
+impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blocking_mutex::raw::RawMutex> HidDevice
+    for TimeAlarmHidRelay<T, M>
+{
     // TODO for the static descriptor case, these should all be inferrable from the report descriptor.
     //      When we have the HID report support types implemented, see if we can have a 'ConstHidDevice'
     //      trait or something and then blanket implement 'HidDevice' for 'ConstHidDevice' that does this
@@ -36,10 +43,14 @@ impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blockin
     const MAX_REPORT_COUNT: u8 = 10; // TODO figure out how many reports we actually need to support and set this accordingly
 
     type ReportReceiver<'a>
-        = embassy_sync::channel::Receiver<'a, M, Result<HidReport<Self::InputReportMaxSize>, HidError>, MAX_PENDING_MESSAGES>
+        = embassy_sync::channel::Receiver<
+        'a,
+        M,
+        Result<HidReport<Self::InputReportMaxSize>, HidError>,
+        MAX_PENDING_MESSAGES,
+    >
     where
         Self: 'a; // TODO figure out the right size for this buffer
-
 
     fn report_descriptor(&self) -> &HidReportDescriptor {
         &self.report_descriptor

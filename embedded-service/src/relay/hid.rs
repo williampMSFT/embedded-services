@@ -46,7 +46,10 @@ impl<MaxSize: ArrayLength> HidReport<MaxSize> {
             id,
             data: {
                 let mut result = GenericArray::default();
-                result.get_mut(..data.len()).ok_or(generic_array::LengthError)?.copy_from_slice(data);
+                result
+                    .get_mut(..data.len())
+                    .ok_or(generic_array::LengthError)?
+                    .copy_from_slice(data);
                 result
             },
             valid_bytes: data.len(),
@@ -197,7 +200,9 @@ pub trait HidDevice {
         &mut self,
         report_type: GetHidReportType,
         report_id: ReportId,
-    ) -> impl core::future::Future<Output = Result<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>, HidError>>; // TODO: I believe the Rust compiler will do RVO for this, but verify in compiler explorer
+    ) -> impl core::future::Future<
+        Output = Result<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>, HidError>,
+    >; // TODO: I believe the Rust compiler will do RVO for this, but verify in compiler explorer
 
     /// Respond to a command from the host to handle a particular output/feature report.
     fn set_report(
@@ -209,7 +214,10 @@ pub trait HidDevice {
     fn receiver(&mut self) -> Self::ReportReceiver<'_>;
 
     /// Called when the host commands a particular power state.
-    fn set_power_state(&mut self, state: HidDevicePowerState) -> impl core::future::Future<Output = Result<(), HidError>>;
+    fn set_power_state(
+        &mut self,
+        state: HidDevicePowerState,
+    ) -> impl core::future::Future<Output = Result<(), HidError>>;
 
     /// Called when the host commands a reset, or when a peer HidDevice in an aggregate triggers a device-initiated reset.
     fn host_reset(&mut self) -> impl core::future::Future<Output = ()>;
@@ -274,7 +282,8 @@ impl HidReportDescriptorElementHeader {
 
     /// The type of the item, which is one of Main, Global, Local, or Reserved.
     fn item_type(&self) -> HidItemType {
-        HidItemType::try_from_primitive((self.0 >> 2) & 0b11).expect("HidItemType::try_from_primitive should never fail because we mask to 2 bits")
+        HidItemType::try_from_primitive((self.0 >> 2) & 0b11)
+            .expect("HidItemType::try_from_primitive should never fail because we mask to 2 bits")
     }
 
     /// The tag of this item, which is a 4-bit value that identifies the specific item within its type (e.g. start collection, end collection, input, output, etc)
@@ -306,7 +315,12 @@ impl HidReportDescriptor {
             }
         }
 
-        Self { bytes, input_id_is_implicit: implicit, output_id_is_implicit: implicit, feature_id_is_implicit: implicit }
+        Self {
+            bytes,
+            input_id_is_implicit: implicit,
+            output_id_is_implicit: implicit,
+            feature_id_is_implicit: implicit,
+        }
     }
 
     /// Returns the raw bytes of the HID report descriptor. This is what will be sent to the host when it requests the HID descriptor.
@@ -327,7 +341,7 @@ impl HidReportDescriptor {
     }
 
     /// Whether or not the feature report ID is implicit in the report descriptor. If true, the report ID is not sent to the host as part of the report header.
-    /// This is only possible on devices that have no more than one feature report. 
+    /// This is only possible on devices that have no more than one feature report.
     pub fn feature_id_is_implicit(&self) -> bool {
         self.feature_id_is_implicit
     }
