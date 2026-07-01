@@ -63,6 +63,12 @@ impl<BusError> From<HidError> for Error<BusError> {
     }
 }
 
+impl<BusError> From<generic_array::LengthError> for Error<BusError> {
+    fn from(_: generic_array::LengthError) -> Self {
+        Error::Protocol(ProtocolError::InvalidSize)
+    }
+}
+
 mod sealed {
     /// Traits that derive from this one are not allowed to be implemented by 3rd party code.
     /// To have those traits implemented, you should satisfy the requirement for their blanket
@@ -720,13 +726,9 @@ impl<
             &self.resources.write_buf.get(..length as usize).ok_or(Error::Protocol(ProtocolError::InvalidSize))?).map_err(|_| Error::Protocol(ProtocolError::InvalidSize) /* TODO figure out if this should just be the err type for hidreport::new */)?,
         );
 
-        match self.resources.hid_device.set_report(&output_report).await {
-            Ok(_) => Ok(()), // No response to host in success case
-            Err(HidError::TriggerReset) => {
-                self.reset().await;
-                Err(Error::Protocol(ProtocolError::InvalidCommand)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
-            }
-        }
+        self.resources.hid_device.set_report(&output_report).await?;
+
+        Ok(())
     }
 
     async fn get_command_report_header(
@@ -842,15 +844,13 @@ impl<
                         HidReport::new(
                             report_id,
                             &self.resources.write_buf.get(..report_size as usize).ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
-                        )
-                        .map_err(|_| Error::Protocol(ProtocolError::InvalidSize) /* TODO figure out if this should just be the err type for hidreport::new */)?,
+                        )?,
                     ),
                     HidI2cReportType::Feature => SetHidReport::Feature(
                         HidReport::new(
                             report_id,
                             &self.resources.write_buf.get(..report_size as usize).ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
-                        )
-                        .map_err(|_| Error::Protocol(ProtocolError::InvalidSize) /* TODO figure out if this should just be the err type for hidreport::new */)?,
+                        )?,
                     ),
                 };
 
