@@ -227,6 +227,7 @@ impl<
             // Timed out waiting for the controller to drive the transfer.
             Err(_timeout_error) => {
                 error!("Read request timeout");
+                bus.recover().await.expect("TODO handle bus recovery error");
                 Err(Error::Protocol(ProtocolError::Timeout))
             }
             // Controller finished writing; report how many bytes we drained.
@@ -238,7 +239,7 @@ impl<
             }
             // Some other write status we don't expect while reading.
             Ok(Ok(status)) => {
-                error!("Unexpected write status: {:?}", status);
+                error!("Unexpected write status: {:?}", status); // TODO this is only necessary because WriteStatus is marked non_exhaustive. Is that really the right thing for it to be? Under what circumstances would it make sense to add a new status there that isn't a breaking change?
                 Err(Error::Protocol(ProtocolError::InvalidData))
             }
             // The bus peripheral itself reported an error.
@@ -248,10 +249,6 @@ impl<
             }
         };
 
-        // Every failure path can leave the transfer wedged, so recover once here rather than in each arm.
-        if result.is_err() {
-            bus.recover().await.expect("TODO handle bus recovery error");
-        }
         result
     }
 
