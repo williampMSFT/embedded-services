@@ -16,7 +16,7 @@ mod constrained_hid_device;
 pub use constrained_hid_device::ConstrainedHidDevice;
 
 mod service;
-pub use service::{Runner, Service};
+pub use service::{Runner, Service, TimeoutSettings};
 
 use embedded_services::{error, info, trace, warn};
 

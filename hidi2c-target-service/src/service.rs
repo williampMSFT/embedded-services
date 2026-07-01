@@ -223,34 +223,36 @@ impl<
     // TODO these are going to need to be tweaked when felipe's fix to the i2c trait goes in
     // TODO these are associated functions because `buffer` is often using a borrow on self (i.e. read_bus(self.bus, self.buffer), but this feels a bit awkward. figure out if there's a more ergonomic way to describe this pattern
     async fn read_bus(bus: &mut Bus, timeout: Duration, buffer: &mut [u8]) -> Result<usize, Error<Bus::Error>> {
-        match with_timeout(timeout, bus.respond_to_write(buffer)).await {
+        let result = match with_timeout(timeout, bus.respond_to_write(buffer)).await {
+            // Timed out waiting for the controller to drive the transfer.
             Err(_timeout_error) => {
                 error!("Read request timeout");
-                bus.recover().await.expect("TODO handle bus recovery error");
                 Err(Error::Protocol(ProtocolError::Timeout))
             }
-            Ok(write_status) => match write_status {
-                Ok(WriteStatus::Stopped(bytes))
-                | Ok(WriteStatus::Restarted(bytes))
-                | Ok(WriteStatus::BufferFull(bytes)) => {
-                    // TODO figure out how to not have to match this twice, I think it involves making the original write_status `format`
-                    if let Ok(write_status) = write_status {
-                        trace!("Host issued write command: {:?}", write_status);
-                    }
-                    Ok(bytes)
-                }
-                Err(e) => {
-                    error!("Error during bus read"); // TODO figure out debug tracing bound
-                    bus.recover().await.expect("TODO handle bus recovery error");
-                    Err(Error::Bus(e))
-                }
-                _ => {
-                    error!("Unexpected write status"); // TODO figure out debug tracing bound
-                    bus.recover().await.expect("TODO handle bus recovery error");
-                    Err(Error::Protocol(ProtocolError::InvalidData))
-                }
-            },
+            // Controller finished writing; report how many bytes we drained.
+            Ok(Ok(
+                status @ (WriteStatus::Stopped(bytes) | WriteStatus::Restarted(bytes) | WriteStatus::BufferFull(bytes)),
+            )) => {
+                trace!("Host issued write command: {:?}", status);
+                Ok(bytes)
+            }
+            // Some other write status we don't expect while reading.
+            Ok(Ok(status)) => {
+                error!("Unexpected write status: {:?}", status);
+                Err(Error::Protocol(ProtocolError::InvalidData))
+            }
+            // The bus peripheral itself reported an error.
+            Ok(Err(e)) => {
+                error!("Error during bus read");
+                Err(Error::Bus(e))
+            }
+        };
+
+        // Every failure path can leave the transfer wedged, so recover once here rather than in each arm.
+        if result.is_err() {
+            bus.recover().await.expect("TODO handle bus recovery error");
         }
+        result
     }
 
     /// Writes the specified bytes to the bus. If the host requests more bytes, pads with 0s until the host is satisfied.
