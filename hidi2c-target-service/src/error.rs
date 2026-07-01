@@ -1,3 +1,4 @@
+use embassy_time::TimeoutError;
 use embedded_services::relay::hid::HidError;
 
 //  HID errors
@@ -47,3 +48,10 @@ impl<BusError> From<generic_array::LengthError> for Error<BusError> {
         Error::Protocol(ProtocolError::InvalidSize)
     }
 }
+
+impl<BusError> From<TimeoutError> for Error<BusError> {
+    fn from(_: TimeoutError) -> Self {
+        Error::Protocol(ProtocolError::Timeout)
+    }
+}
+

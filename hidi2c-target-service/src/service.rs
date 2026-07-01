@@ -290,20 +290,13 @@ impl<
     /// Waits for the controller to command us over the bus, with timeout handling.
     async fn listen_bus(bus: &mut Bus, timeout: Duration) -> Result<Request, Error<Bus::Error>> {
         loop {
-            let result = match with_timeout(timeout, bus.listen()).await {
-                Err(_timeout_error) => {
-                    error!("Listen request timeout");
-                    bus.recover().await.expect("TODO handle bus recovery error");
-                    Err(Error::Protocol(ProtocolError::Timeout))
-                }
-                Ok(result) => result.map_err(|_| Error::Protocol(ProtocolError::Timeout)),
-            };
-
-            if let Ok(Request::RepeatedStart(_a)) = result {
+            let result = with_timeout(timeout, bus.listen()).await?;
+            let result = result.map_err(|e| Error::Bus(e))?;
+            if let Request::RepeatedStart(_a) = result {
                 continue;
             }
 
-            return result;
+            return Ok(result);
         }
     }
 
@@ -347,11 +340,9 @@ impl<
                     "HID-I2C: Error during bus operation: {:?}",
                     embedded_mcu_hal::i2c::target::Error::kind(&bus_error)
                 );
-                // TODO what do?
             }
             Err(Error::Protocol(protocol_error)) => {
                 error!("HID-I2C: Protocol error during bus operation: {:?}", protocol_error);
-                // TODO what do?
             }
             Err(Error::Device(HidError::TriggerReset)) => {
                 warn!("HID-I2C: HID device requested device-initiated reset");
@@ -384,7 +375,7 @@ impl<
                             self.resources.device_descriptor.as_bytes(),
                         )
                         .await?;
-                        trace!("Done responding to request for device descriptor"); // TODO rm
+
                         Ok(())
                     }
                     _ => {
