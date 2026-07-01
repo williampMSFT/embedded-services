@@ -11,7 +11,7 @@ use embedded_mcu_hal::i2c::target::Request;
 use embedded_mcu_hal::i2c::target::WriteStatus;
 use embedded_mcu_hal::i2c::target::asynch::I2c as I2cTargetAsync;
 use embedded_services::relay::hid;
-use embedded_services::relay::hid::{HidReport, ReportReceiver, SetHidReport, GetHidReportType, HidError};
+use embedded_services::relay::hid::{GetHidReportType, HidError, HidReport, ReportReceiver, SetHidReport};
 use embedded_services::{error, info, trace, warn};
 use generic_array::ArrayLength;
 use typenum::Max;
@@ -48,7 +48,7 @@ enum Error<BusError> {
     /// HID protocol error
     Protocol(ProtocolError),
     /// Error reported from our underlying HidDevice in response to a request from us
-    Device(HidError)
+    Device(HidError),
 }
 
 impl<BusError> From<ProtocolError> for Error<BusError> {
@@ -102,7 +102,7 @@ where
     type MaxOutputOrFeatureSize = <T::FeatureReportMaxSize as Max<T::OutputReportMaxSize>>::Output;
 }
 
-impl<T> sealed::Sealed for T where T: ConstrainedHidDevice{}
+impl<T> sealed::Sealed for T where T: ConstrainedHidDevice {}
 
 /// HID-I2C register addresses as specified in section 5.1 of the HID-I2C spec.
 /// These specific values are our convention, not from the HID-I2C spec, but section 4.2 indicates
@@ -252,7 +252,7 @@ struct RunnerResources<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::Outp
     data_read_timeout: Duration,
 
     /// True if a reset has been triggered but not yet acknowledged by the host
-    pending_reset: bool
+    pending_reset: bool,
 }
 
 impl<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice>
@@ -274,11 +274,10 @@ impl<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: 
             write_buf: generic_array::GenericArray::default(),
             device_response_timeout,
             data_read_timeout,
-            pending_reset: false // The host is responsible for explicitly resetting us at boot, so we start in a non-reset state
+            pending_reset: false, // The host is responsible for explicitly resetting us at boot, so we start in a non-reset state
         }
     }
 }
-
 
 /// Handler for the ATTN pin, which is used to signal the host that we have an input report ready to be read.
 /// This is a simple wrapper around an OutputPin that tracks whether we've asserted the interrupt or not, because
@@ -288,13 +287,16 @@ mod attn_pin_handler {
     use super::*;
     pub struct AttnPinHandler<AttnPin: embedded_hal::digital::OutputPin> {
         attn_pin: AttnPin,
-        asserted: bool
+        asserted: bool,
     }
 
     impl<AttnPin: embedded_hal::digital::OutputPin> AttnPinHandler<AttnPin> {
         /// Construct a new handler that owns the provided GPIO hardware
         pub fn new(attn_pin: AttnPin) -> Self {
-            let mut result = Self { attn_pin, asserted: false};
+            let mut result = Self {
+                attn_pin,
+                asserted: false,
+            };
             result.clear_interrupt();
             result
         }
@@ -303,14 +305,18 @@ mod attn_pin_handler {
         pub fn clear_interrupt(&mut self) {
             trace!("HID-I2C: ATTN: clear interrupt");
             self.asserted = false;
-            self.attn_pin.set_high().unwrap_or_else(|_| error!("HID-I2C: Failed to clear interrupt on attn pin"));
+            self.attn_pin
+                .set_high()
+                .unwrap_or_else(|_| error!("HID-I2C: Failed to clear interrupt on attn pin"));
         }
 
         /// Assert the interrupt, which is done by pulling the pin low.
         pub fn assert_interrupt(&mut self) {
             trace!("HID-I2C: ATTN: assert interrupt");
             self.asserted = true;
-            self.attn_pin.set_low().unwrap_or_else(|_| error!("HID-I2C: Failed to assert interrupt on attn pin"));
+            self.attn_pin
+                .set_low()
+                .unwrap_or_else(|_| error!("HID-I2C: Failed to assert interrupt on attn pin"));
         }
 
         /// Returns true if we are asserting the interrupt, false otherwise.
@@ -322,9 +328,8 @@ mod attn_pin_handler {
 use attn_pin_handler::AttnPinHandler;
 
 /// Resources used by the service
-struct ServiceResources
-{
-    reset_signal: embassy_sync::signal::Signal<embedded_services::GlobalRawMutex, ()>
+struct ServiceResources {
+    reset_signal: embassy_sync::signal::Signal<embedded_services::GlobalRawMutex, ()>,
 }
 
 pub struct Runner<'hw, Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice>
@@ -344,7 +349,7 @@ impl<
         loop {
             let event = {
                 // If we've raised the interrupt, we know it won't be dismissed again until it's serviced by the host reading
-                // the input report, so we don't need to listen for another notification. 
+                // the input report, so we don't need to listen for another notification.
                 let receiver = self.resources.hid_device.receiver();
                 let input_report_ready_future = async {
                     if self.resources.attn_pin.asserted() {
@@ -353,12 +358,18 @@ impl<
                         receiver.ready_to_receive().await
                     }
                 };
-                embassy_futures::select::select3(self.resources.bus.listen(), input_report_ready_future, self.reset_signal.wait()).await
+                embassy_futures::select::select3(
+                    self.resources.bus.listen(),
+                    input_report_ready_future,
+                    self.reset_signal.wait(),
+                )
+                .await
             };
             match event {
                 embassy_futures::select::Either3::First(bus_request) => {
                     trace!("Processing request from host");
-                    self.process_request(bus_request.expect("TODO handle error recovery")).await;
+                    self.process_request(bus_request.expect("TODO handle error recovery"))
+                        .await;
                 }
                 embassy_futures::select::Either3::Second(()) => {
                     trace!("Signalling host that we have an input report ready");
@@ -425,24 +436,26 @@ impl<
     }
 
     /// Writes the specified bytes to the bus. If the host requests more bytes, returns true, otherwise false.
-    async fn write_bus_unterminated(bus: &mut Bus, timeout: Duration, buffer: &[u8]) -> Result<bool, Error<Bus::Error>> {
+    async fn write_bus_unterminated(
+        bus: &mut Bus,
+        timeout: Duration,
+        buffer: &[u8],
+    ) -> Result<bool, Error<Bus::Error>> {
         match with_timeout(timeout, bus.respond_to_read(buffer)).await {
             Err(_timeout_error) => {
                 error!("Write request timeout");
                 bus.recover().await.expect("TODO handle bus recovery error");
                 Err(Error::Protocol(ProtocolError::Timeout))
             }
-            Ok(result) => {
-                result.map(|read_status|  {
-                    match read_status {
-                        ReadStatus::NeedMore(_) => {
-                            trace!("host requested more bytes than we provided");
-                            true
-                        },
-                        _ => false
+            Ok(result) => result
+                .map(|read_status| match read_status {
+                    ReadStatus::NeedMore(_) => {
+                        trace!("host requested more bytes than we provided");
+                        true
                     }
-                }).map_err(|e| Error::Bus(e))
-            }
+                    _ => false,
+                })
+                .map_err(|e| Error::Bus(e)),
         }
     }
 
@@ -496,7 +509,7 @@ impl<
             _ => {
                 info!("HID-I2C: Not handling command {:?}", request);
                 return;
-            },
+            }
         };
 
         match result {
@@ -530,7 +543,10 @@ impl<
                 let request = Self::listen_bus(&mut self.resources.bus, self.resources.device_response_timeout).await?;
                 match request {
                     Request::Read(_address) => {
-                        trace!("Responding to request for device descriptor with {} bytes", self.resources.device_descriptor.as_bytes().len());
+                        trace!(
+                            "Responding to request for device descriptor with {} bytes",
+                            self.resources.device_descriptor.as_bytes().len()
+                        );
                         Self::write_bus(
                             &mut self.resources.bus,
                             self.resources.device_response_timeout,
@@ -541,7 +557,10 @@ impl<
                         Ok(())
                     }
                     _ => {
-                        error!("Expected read request after device descriptor register access: {:?}", request);
+                        error!(
+                            "Expected read request after device descriptor register access: {:?}",
+                            request
+                        );
                         Err(Error::Protocol(ProtocolError::InvalidRegisterAddress))
                     }
                 }
@@ -550,7 +569,7 @@ impl<
                 match Self::listen_bus(&mut self.resources.bus, self.resources.device_response_timeout).await? {
                     // TODO do we need to handle the case where the host decides to talk to someone else in the middle of talking to us?
                     Request::Read(_address) => {
-                    trace!("Responding to request for report descriptor");
+                        trace!("Responding to request for report descriptor");
                         Self::write_bus(
                             &mut self.resources.bus,
                             self.resources.device_response_timeout,
@@ -567,9 +586,7 @@ impl<
                 }
             }
             HidI2cRegister::Input => self.process_input_report_read().await,
-            HidI2cRegister::Output => {
-                self.process_output_report_write().await
-            }
+            HidI2cRegister::Output => self.process_output_report_write().await,
             HidI2cRegister::Command => self.process_command().await,
             HidI2cRegister::Data => {
                 error!(
@@ -587,7 +604,10 @@ impl<
         if let Request::Read(_address) = read_request {
             self.reply_with_input_report().await
         } else {
-            error!("Expected read request after input report register access, got {:?}", read_request);
+            error!(
+                "Expected read request after input report register access, got {:?}",
+                read_request
+            );
             Err(Error::Protocol(ProtocolError::InvalidCommand))
         }
     }
@@ -612,28 +632,43 @@ impl<
         let report = self.resources.hid_device.receiver().receive().await?;
         info!("Got report to return - listening to bus for read request");
 
-        let size_bytes = report.data().len() as u16 +
-                            device_descriptor::HID_REPORT_HEADER_SIZE_BYTES +
-                        if self.resources.hid_device.report_descriptor().input_id_is_implicit() { 0 } 
-                        else { device_descriptor::HID_REPORT_ID_SIZE_BYTES };
+        let size_bytes = report.data().len() as u16
+            + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES
+            + if self.resources.hid_device.report_descriptor().input_id_is_implicit() {
+                0
+            } else {
+                device_descriptor::HID_REPORT_ID_SIZE_BYTES
+            };
         let [size_low, size_high] = size_bytes.to_le_bytes();
         let header = [size_low, size_high, report.id().0];
 
         let header_slice = if self.resources.hid_device.report_descriptor().input_id_is_implicit() {
-            header.get(..2).expect("We know header is 3 bytes because we just declared it")
+            header
+                .get(..2)
+                .expect("We know header is 3 bytes because we just declared it")
         } else {
             &header
         };
 
-        trace!("Responding with input report {}: {:x} {:x}", report.id(), header_slice, report.data());
+        trace!(
+            "Responding with input report {}: {:x} {:x}",
+            report.id(),
+            header_slice,
+            report.data()
+        );
         Self::write_bus_unterminated(
             &mut self.resources.bus,
             self.resources.device_response_timeout,
-            header_slice
+            header_slice,
         )
         .await?;
 
-        Self::write_bus(&mut self.resources.bus, self.resources.device_response_timeout, report.data()).await?;
+        Self::write_bus(
+            &mut self.resources.bus,
+            self.resources.device_response_timeout,
+            report.data(),
+        )
+        .await?;
 
         if self.resources.hid_device.receiver().is_empty() {
             self.resources.attn_pin.clear_interrupt();
@@ -646,7 +681,9 @@ impl<
         let mut write_header_buf = [0u8; 3];
         let mut header_buf_slice = if self.resources.hid_device.report_descriptor().output_id_is_implicit() {
             // NOTE: If there is no report ID because we only have one report, we call it 0.
-            write_header_buf.get_mut(..2).expect("We know buffer is 3 bytes because we just declared it")
+            write_header_buf
+                .get_mut(..2)
+                .expect("We know buffer is 3 bytes because we just declared it")
         } else {
             &mut write_header_buf
         };
@@ -733,8 +770,8 @@ impl<
 
             Opcode::SetPower => {
                 trace!("Processing set power command");
-                let power_state =
-                    I2cPowerState::try_from(command_byte).map_err(|_| Error::Protocol(ProtocolError::InvalidCommand))?;
+                let power_state = I2cPowerState::try_from(command_byte)
+                    .map_err(|_| Error::Protocol(ProtocolError::InvalidCommand))?;
                 // NOTE: behavior preserved from before the error-handling refactor - the reset request from
                 // set_power_state is intentionally ignored here.
                 let _ = self.resources.hid_device.set_power_state(power_state.into()).await;
@@ -745,7 +782,16 @@ impl<
                 trace!("Processing get report command");
 
                 let (report_type, report_id) = self.get_command_report_header(command_byte).await?;
-                let report = self.resources.hid_device.get_report(report_type.to_get_type().ok_or(Error::Protocol(ProtocolError::InvalidCommand))?, report_id).await?;
+                let report = self
+                    .resources
+                    .hid_device
+                    .get_report(
+                        report_type
+                            .to_get_type()
+                            .ok_or(Error::Protocol(ProtocolError::InvalidCommand))?,
+                        report_id,
+                    )
+                    .await?;
 
                 // Note: per HID spec, the length field needs to include its own length (2 bytes)
                 let len_header = ((report.data().len() + core::mem::size_of::<u16>()) as u16).to_le_bytes();
@@ -845,15 +891,12 @@ impl<
         attn_pin: AttnPin,
         hid_device: HidDevice,
         hwinfo: HardwareVersionInfo,
-        timeout_settings: TimeoutSettings
+        timeout_settings: TimeoutSettings,
     ) -> Result<(Self, Runner<'hw, Bus, AttnPin, HidDevice>), core::convert::Infallible> {
-        let device_descriptor = DeviceDescriptor::new(
-            &hid_device,
-            hwinfo,
-        );
+        let device_descriptor = DeviceDescriptor::new(&hid_device, hwinfo);
 
         let service_resources: &ServiceResources = storage.service_resources.insert(ServiceResources {
-            reset_signal: embassy_sync::signal::Signal::new()
+            reset_signal: embassy_sync::signal::Signal::new(),
         });
 
         let runner_resources = storage.runner_resources.insert(RunnerResources::new(
@@ -880,9 +923,7 @@ impl<
     }
 
     /// Causes the HID service to perform a device-initiated reset.
-    pub fn reset(
-        &mut self,
-    ) {
+    pub fn reset(&mut self) {
         self.resources.reset_signal.signal(());
     }
 }
@@ -903,14 +944,14 @@ pub struct TimeoutSettings {
     /// Timeout for device response reads
     pub device_response_timeout: Duration,
     /// Timeout for data reads from the host.
-    pub data_read_timeout: Duration
+    pub data_read_timeout: Duration,
 }
 
 impl Default for TimeoutSettings {
     fn default() -> Self {
         Self {
             device_response_timeout: Duration::from_secs(1),
-            data_read_timeout: Duration::from_secs(1)
+            data_read_timeout: Duration::from_secs(1),
         }
     }
 }
