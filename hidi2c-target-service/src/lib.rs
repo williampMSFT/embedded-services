@@ -21,6 +21,9 @@ mod device_descriptor;
 use device_descriptor::DeviceDescriptor;
 pub use device_descriptor::{HardwareVersionInfo, ProductId, VendorId, VersionId};
 
+mod attn_pin_handler;
+use attn_pin_handler::AttnPinHandler;
+
 //  HID errors
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -285,59 +288,12 @@ impl<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: 
     }
 }
 
-/// Handler for the ATTN pin, which is used to signal the host that we have an input report ready to be read.
-/// This is a simple wrapper around an OutputPin that tracks whether we've asserted the interrupt or not, because
-/// OutputPin doesn't have a built-in way to interrogate its own state.
-///
-mod attn_pin_handler {
-    use super::*;
-    pub struct AttnPinHandler<AttnPin: embedded_hal::digital::OutputPin> {
-        attn_pin: AttnPin,
-        asserted: bool,
-    }
-
-    impl<AttnPin: embedded_hal::digital::OutputPin> AttnPinHandler<AttnPin> {
-        /// Construct a new handler that owns the provided GPIO hardware
-        pub fn new(attn_pin: AttnPin) -> Self {
-            let mut result = Self {
-                attn_pin,
-                asserted: false,
-            };
-            result.clear_interrupt();
-            result
-        }
-
-        /// Clear the interrupt, which is done by setting the pin high.
-        pub fn clear_interrupt(&mut self) {
-            trace!("HID-I2C: ATTN: clear interrupt");
-            self.asserted = false;
-            self.attn_pin
-                .set_high()
-                .unwrap_or_else(|_| error!("HID-I2C: Failed to clear interrupt on attn pin"));
-        }
-
-        /// Assert the interrupt, which is done by pulling the pin low.
-        pub fn assert_interrupt(&mut self) {
-            trace!("HID-I2C: ATTN: assert interrupt");
-            self.asserted = true;
-            self.attn_pin
-                .set_low()
-                .unwrap_or_else(|_| error!("HID-I2C: Failed to assert interrupt on attn pin"));
-        }
-
-        /// Returns true if we are asserting the interrupt, false otherwise.
-        pub fn asserted(&self) -> bool {
-            self.asserted
-        }
-    }
-}
-use attn_pin_handler::AttnPinHandler;
-
 /// Resources used by the service
 struct ServiceResources {
     reset_signal: embassy_sync::signal::Signal<embedded_services::GlobalRawMutex, ()>,
 }
 
+/// Service runner for the HID-I2C service. You must call run() on the runner to drive the service.
 pub struct Runner<'hw, Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice>
 {
     resources: &'hw mut RunnerResources<Bus, AttnPin, HidDevice>,
@@ -359,7 +315,7 @@ impl<
                 let receiver = self.resources.hid_device.receiver();
                 let input_report_ready_future = async {
                     if self.resources.attn_pin.asserted() {
-                        core::future::pending::<()>().await
+                        core::future::pending().await
                     } else {
                         receiver.ready_to_receive().await
                     }
@@ -684,7 +640,7 @@ impl<
     }
 
     async fn process_output_report_write(&mut self) -> Result<(), Error<Bus::Error>> {
-        let mut write_header_buf = [0u8; 3];
+        let mut write_header_buf = [0u8; (device_descriptor::HID_REPORT_HEADER_SIZE_BYTES + device_descriptor::HID_REPORT_ID_SIZE_BYTES) as usize];
         let mut header_buf_slice = if self.resources.hid_device.report_descriptor().output_id_is_implicit() {
             // NOTE: If there is no report ID because we only have one report, we call it 0.
             write_header_buf
@@ -722,8 +678,14 @@ impl<
         // TODO this makes a copy, which feels bad - figure out if we can make this write directly into the HID report and still be typesafe . maybe some sort of builder type but need to check in compilerexplorer if something like that actually omits the copy
         let output_report = embedded_services::relay::hid::SetHidReport::Output(
             HidReport::new(
-            embedded_services::relay::hid::ReportId(report_id),
-            &self.resources.write_buf.get(..length as usize).ok_or(Error::Protocol(ProtocolError::InvalidSize))?).map_err(|_| Error::Protocol(ProtocolError::InvalidSize) /* TODO figure out if this should just be the err type for hidreport::new */)?,
+                embedded_services::relay::hid::ReportId(report_id),
+                &self
+                    .resources
+                    .write_buf
+                    .get(..length as usize)
+                    .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
+            )
+            .map_err(|_| Error::Protocol(ProtocolError::InvalidSize))?,
         );
 
         self.resources.hid_device.set_report(&output_report).await?;
@@ -774,9 +736,7 @@ impl<
                 trace!("Processing set power command");
                 let power_state = I2cPowerState::try_from(command_byte)
                     .map_err(|_| Error::Protocol(ProtocolError::InvalidCommand))?;
-                // NOTE: behavior preserved from before the error-handling refactor - the reset request from
-                // set_power_state is intentionally ignored here.
-                let _ = self.resources.hid_device.set_power_state(power_state.into()).await;
+                self.resources.hid_device.set_power_state(power_state.into()).await?;
                 Ok(())
             }
 
@@ -796,7 +756,8 @@ impl<
                     .await?;
 
                 // Note: per HID spec, the length field needs to include its own length (2 bytes)
-                let len_header = ((report.data().len() + core::mem::size_of::<u16>()) as u16).to_le_bytes();
+                let len_header =
+                    ((report.data().len() as u16 + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES)).to_le_bytes();
                 Self::write_bus(
                     &mut self.resources.bus,
                     self.resources.device_response_timeout,
@@ -816,21 +777,24 @@ impl<
             Opcode::SetReport => {
                 trace!("Processing set report command");
                 let (report_type, report_id) = self.get_command_report_header(command_byte).await?;
-                let mut len_header = [0u8; 2];
+                let mut len_header = [0u8; core::mem::size_of::<u16>()];
                 Self::read_bus(
                     &mut self.resources.bus,
                     self.resources.data_read_timeout,
                     &mut len_header,
                 )
                 .await?;
-                let report_size = u16::from_le_bytes(len_header) - 2; // Note: per HID spec, the length field needs to include its own length (2 bytes)
+
+                // Note: per HID spec, the length field relayed over the wire needs to include its own length (2 bytes)
+                let report_size =
+                    (u16::from_le_bytes(len_header) - device_descriptor::HID_REPORT_HEADER_SIZE_BYTES) as usize;
                 Self::read_bus(
                     &mut self.resources.bus,
                     self.resources.data_read_timeout,
                     &mut self
                         .resources
                         .write_buf
-                        .get_mut(..report_size as usize)
+                        .get_mut(..report_size)
                         .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
                 )
                 .await?;
@@ -840,18 +804,22 @@ impl<
                         error!("Host attempted to send us an input report, which is invalid");
                         return Err(Error::Protocol(ProtocolError::InvalidReportType));
                     }
-                    HidI2cReportType::Output => SetHidReport::Output(
-                        HidReport::new(
-                            report_id,
-                            &self.resources.write_buf.get(..report_size as usize).ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
-                        )?,
-                    ),
-                    HidI2cReportType::Feature => SetHidReport::Feature(
-                        HidReport::new(
-                            report_id,
-                            &self.resources.write_buf.get(..report_size as usize).ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
-                        )?,
-                    ),
+                    HidI2cReportType::Output => SetHidReport::Output(HidReport::new(
+                        report_id,
+                        &self
+                            .resources
+                            .write_buf
+                            .get(..report_size)
+                            .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
+                    )?),
+                    HidI2cReportType::Feature => SetHidReport::Feature(HidReport::new(
+                        report_id,
+                        &self
+                            .resources
+                            .write_buf
+                            .get(..report_size)
+                            .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
+                    )?),
                 };
 
                 self.resources.hid_device.set_report(&set_report).await?;
@@ -869,6 +837,7 @@ impl<
     }
 }
 
+/// Control handle for an instance of the HID-I2C service, which presents a HID-I2C device over an (I2C bus, interrupt line) tuple
 #[derive(Clone, Copy)]
 pub struct Service<'hw, Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice>
 {
@@ -885,6 +854,9 @@ impl<
     HidDevice: ConstrainedHidDevice + 'hw,
 > Service<'hw, Bus, AttnPin, HidDevice>
 {
+    /// Creates a new instance of the HID-I2C service and its associated runner.
+    /// You must call run() on the runner to drive the service.  Consider using
+    /// this in conjunction with `odp_service_common::runnable_service::spawn_service!()`
     pub async fn new(
         storage: &'hw mut Resources<Bus, AttnPin, HidDevice>,
         bus: Bus,
