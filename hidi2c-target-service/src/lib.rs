@@ -47,6 +47,8 @@ enum Error<BusError> {
     Bus(BusError),
     /// HID protocol error
     Protocol(ProtocolError),
+    /// Error reported from our underlying HidDevice in response to a request from us
+    Device(HidError)
 }
 
 impl<BusError> From<ProtocolError> for Error<BusError> {
@@ -55,7 +57,16 @@ impl<BusError> From<ProtocolError> for Error<BusError> {
     }
 }
 
+impl<BusError> From<HidError> for Error<BusError> {
+    fn from(err: HidError) -> Self {
+        Error::Device(err)
+    }
+}
+
 mod sealed {
+    /// Traits that derive from this one are not allowed to be implemented by 3rd party code.
+    /// To have those traits implemented, you should satisfy the requirement for their blanket
+    /// implementation instead.
     pub trait Sealed {}
 }
 
@@ -145,7 +156,7 @@ enum Opcode {
     // Reserved: 0x0F
 }
 
-/// I2C wire format representation for HID power states
+/// I2C wire format representation for HID power states.
 #[repr(u8)]
 #[derive(num_enum::TryFromPrimitive, num_enum::IntoPrimitive, Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -163,8 +174,7 @@ impl From<I2cPowerState> for hid::HidDevicePowerState {
     }
 }
 
-#[repr(u8)]
-#[derive(num_enum::TryFromPrimitive, num_enum::IntoPrimitive, Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum HidI2cReportType {
     Input,
@@ -172,6 +182,7 @@ enum HidI2cReportType {
     Feature,
 }
 
+// TODO can this be a tryfrom impl?
 impl HidI2cReportType {
     fn to_get_type(&self) -> Option<GetHidReportType> {
         match self {
@@ -224,14 +235,16 @@ impl<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: 
         }
     }
 }
+
+/// Resources owned by the runner.  TODO should these just go in the runner itself?
 struct RunnerResources<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice>
 {
     bus: Bus,
     attn_pin: AttnPinHandler<AttnPin>,
-    hid_device: HidDevice, // TODO some sort of channel for talking to runner?
+    hid_device: HidDevice,
     device_descriptor: DeviceDescriptor,
 
-    // Read/write buffers.
+    // Buffer for receiving messages.
     write_buf: generic_array::GenericArray<u8, HidDevice::MaxOutputOrFeatureSize>,
 
     device_response_timeout: Duration,
@@ -282,22 +295,22 @@ mod attn_pin_handler {
         /// Construct a new handler that owns the provided GPIO hardware
         pub fn new(attn_pin: AttnPin) -> Self {
             let mut result = Self { attn_pin, asserted: false};
-            result.clear_interrupt().unwrap_or_else(|_| error!("HID-I2C: Failed to clear interrupt on attn pin"));
+            result.clear_interrupt();
             result
         }
 
         /// Clear the interrupt, which is done by setting the pin high.
-        pub fn clear_interrupt(&mut self) -> Result<(), AttnPin::Error> {
-            trace!("ATTN: clear interrupt");
+        pub fn clear_interrupt(&mut self) {
+            trace!("HID-I2C: ATTN: clear interrupt");
             self.asserted = false;
-            self.attn_pin.set_high()
+            self.attn_pin.set_high().unwrap_or_else(|_| error!("HID-I2C: Failed to clear interrupt on attn pin"));
         }
 
         /// Assert the interrupt, which is done by pulling the pin low.
-        pub fn assert_interrupt(&mut self) -> Result<(), AttnPin::Error> {
-            trace!("ATTN: assert interrupt");
+        pub fn assert_interrupt(&mut self) {
+            trace!("HID-I2C: ATTN: assert interrupt");
             self.asserted = true;
-            self.attn_pin.set_low()
+            self.attn_pin.set_low().unwrap_or_else(|_| error!("HID-I2C: Failed to assert interrupt on attn pin"));
         }
 
         /// Returns true if we are asserting the interrupt, false otherwise.
@@ -308,7 +321,7 @@ mod attn_pin_handler {
 }
 use attn_pin_handler::AttnPinHandler;
 
-
+/// Resources used by the service
 struct ServiceResources
 {
     reset_signal: embassy_sync::signal::Signal<embedded_services::GlobalRawMutex, ()>
@@ -349,7 +362,7 @@ impl<
                 }
                 embassy_futures::select::Either3::Second(()) => {
                     trace!("Signalling host that we have an input report ready");
-                    self.resources.attn_pin.assert_interrupt().expect("TODO handle attn pin error");
+                    self.resources.attn_pin.assert_interrupt();
                 }
                 embassy_futures::select::Either3::Third(()) => {
                     trace!("Received reset request");
@@ -462,16 +475,14 @@ impl<
         //      if that's not the case - we may need some layer above this that filters on address and dispatches to
         //      different instances based on that
         //
-        match request {
+        let result = match request {
             Request::Write(_address) => {
-                self.process_register_access().await.expect("TODO handle error correctly");
-                // if let Err(e) =  {
-                //     error!("Error processing register access: {}", e);
-                // }
+                trace!("HID-I2C: Processing register access");
+                self.process_register_access().await
             }
             Request::Read(_address) => {
                 trace!("HID-I2C: Host requested input report");
-                self.reply_with_input_report().await.expect("TODO handle error correctly");
+                self.reply_with_input_report().await
             }
 
             // TODO this is in line with what we were doing for the I2cCommand::Probe command in the old hid service, but it's not
@@ -483,22 +494,36 @@ impl<
             //          Request::SmbusAlert                  // I don't know what this is
             //
             _ => {
-                warn!("Not handling command {:?}", request);
+                info!("HID-I2C: Not handling command {:?}", request);
                 return;
             },
+        };
+
+        match result {
+            Ok(_) => {}
+            Err(Error::Bus(bus_error)) => {
+                error!("HID-I2C: Error during bus operation: {:?}", bus_error);
+                // TODO what do?
+            }
+            Err(Error::Protocol(protocol_error)) => {
+                error!("HID-I2C: Protocol error during bus operation: {:?}", protocol_error);
+                // TODO what do?
+            }
+            Err(Error::Device(HidError::TriggerReset)) => {
+                warn!("HID-I2C: HID device requested device-initiated reset");
+                self.reset().await;
+            }
         }
     }
 
     async fn process_register_access(&mut self) -> Result<(), Error<Bus::Error>> {
-        info!("Processing register access");
-
         let mut reg = [0u8; 2];
         Self::read_bus(&mut self.resources.bus, self.resources.data_read_timeout, &mut reg).await?;
 
         let register = HidI2cRegister::try_from(u16::from_le_bytes(reg))
             .map_err(|_| Error::Protocol(ProtocolError::InvalidRegisterAddress))?;
 
-        info!("Host requested to access register {:?}", register);
+        info!("HID-I2C: Host requested to access register {:?}", register);
         match register {
             HidI2cRegister::DeviceDescriptor => {
                 // TODO do we need to handle the case where the host decides to talk to someone else in the middle of talking to us?
@@ -547,9 +572,8 @@ impl<
             }
             HidI2cRegister::Command => self.process_command().await,
             HidI2cRegister::Data => {
-                // TODO clean up logging here
                 error!(
-                    "Got a data read when we weren't expecting one, those should only come in when we're in the middle of handling a Command register invocation"
+                    "HID-I2C: Got read to Data register without a preceding write to the Command register; this is unexpected and may indicate a bug in the service."
                 );
                 Err(Error::Protocol(ProtocolError::InvalidRegisterAddress))
             }
@@ -581,56 +605,41 @@ impl<
             .await?;
 
             self.resources.pending_reset = false;
-            self.resources.attn_pin.clear_interrupt().expect("TODO handle attn pin error");
+            self.resources.attn_pin.clear_interrupt();
             return Ok(());
         }
 
-        let report = self.resources.hid_device.receiver().receive().await; // TODO should we timeout?
-        match report {
-            Ok(report) => {
-                info!("Got report to return - listening to bus for read request");
+        let report = self.resources.hid_device.receiver().receive().await?;
+        info!("Got report to return - listening to bus for read request");
 
-                // TODO - in the case where the device we're representing gives us a report descriptor that does not specify report IDs,
-                //        the report ID is supposed to be omitted.  This is only possible on devices that have no more than one HID report of
-                //        each class (i.e. can have a single input report and and a single output report).
-                //
-                //        We don't currently handle this case because we don't have the HID report parsing library implemented yet; once we
-                //        write that, we can use it here to figure out if we're in 'single report' mode and omit the report ID in that case.
-                //
-                let size_bytes = report.data().len() as u16 +
-                                 device_descriptor::HID_REPORT_HEADER_SIZE_BYTES +
-                                if self.resources.hid_device.report_descriptor().input_id_is_implicit() { 0 } 
-                                else { device_descriptor::HID_REPORT_ID_SIZE_BYTES };
-                let [size_low, size_high] = size_bytes.to_le_bytes();
-                let header = [size_low, size_high, report.id().0];
+        let size_bytes = report.data().len() as u16 +
+                            device_descriptor::HID_REPORT_HEADER_SIZE_BYTES +
+                        if self.resources.hid_device.report_descriptor().input_id_is_implicit() { 0 } 
+                        else { device_descriptor::HID_REPORT_ID_SIZE_BYTES };
+        let [size_low, size_high] = size_bytes.to_le_bytes();
+        let header = [size_low, size_high, report.id().0];
 
-                let header_slice = if self.resources.hid_device.report_descriptor().input_id_is_implicit() {
-                    header.get(..2).expect("We know header is 3 bytes because we just declared it")
-                } else {
-                    &header
-                };
+        let header_slice = if self.resources.hid_device.report_descriptor().input_id_is_implicit() {
+            header.get(..2).expect("We know header is 3 bytes because we just declared it")
+        } else {
+            &header
+        };
 
-                trace!("Responding with input report {}: {:x} {:x}", report.id(), header_slice, report.data());
-                Self::write_bus_unterminated(
-                    &mut self.resources.bus,
-                    self.resources.device_response_timeout,
-                    header_slice
-                )
-                .await?;
+        trace!("Responding with input report {}: {:x} {:x}", report.id(), header_slice, report.data());
+        Self::write_bus_unterminated(
+            &mut self.resources.bus,
+            self.resources.device_response_timeout,
+            header_slice
+        )
+        .await?;
 
-                Self::write_bus(&mut self.resources.bus, self.resources.device_response_timeout, report.data()).await?;
+        Self::write_bus(&mut self.resources.bus, self.resources.device_response_timeout, report.data()).await?;
 
-                if self.resources.hid_device.receiver().is_empty() {
-                    self.resources.attn_pin.clear_interrupt().expect("TODO handle attn pin error");
-                }
-                Ok(())
-
-            }
-            Err(HidError::TriggerReset) => {
-                self.reset().await;
-                Err(Error::Protocol(ProtocolError::InvalidCommand)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
-            }
+        if self.resources.hid_device.receiver().is_empty() {
+            self.resources.attn_pin.clear_interrupt();
         }
+
+        Ok(())
     }
 
     async fn process_output_report_write(&mut self) -> Result<(), Error<Bus::Error>> {
@@ -718,9 +727,8 @@ impl<
 
         match Opcode::try_from(opcode_byte).map_err(|_| Error::Protocol(ProtocolError::InvalidCommand))? {
             Opcode::Reset => {
-                trace!("Processing reset command");
-                self.reset().await;
-                Ok(())
+                warn!("HID-I2C: Host requested device reset");
+                Err(Error::Device(HidError::TriggerReset))
             }
 
             Opcode::SetPower => {
@@ -737,32 +745,24 @@ impl<
                 trace!("Processing get report command");
 
                 let (report_type, report_id) = self.get_command_report_header(command_byte).await?;
-                match self.resources.hid_device.get_report(report_type.to_get_type().ok_or(Error::Protocol(ProtocolError::InvalidCommand))?, report_id).await {
-                    Err(HidError::TriggerReset) => {
-                        trace!("Triggering reset due to GetReport failure");
-                        self.reset().await;
-                        Err(Error::Protocol(ProtocolError::Timeout)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
-                    }
+                let report = self.resources.hid_device.get_report(report_type.to_get_type().ok_or(Error::Protocol(ProtocolError::InvalidCommand))?, report_id).await?;
 
-                    Ok(report) => {
-                        // Note: per HID spec, the length field needs to include its own length (2 bytes)
-                        let len_header = ((report.data().len() + core::mem::size_of::<u16>()) as u16).to_le_bytes();
-                        Self::write_bus(
-                            &mut self.resources.bus,
-                            self.resources.device_response_timeout,
-                            &len_header,
-                        )
-                        .await?;
-                        Self::write_bus(
-                            &mut self.resources.bus,
-                            self.resources.device_response_timeout,
-                            report.data(),
-                        )
-                        .await?;
+                // Note: per HID spec, the length field needs to include its own length (2 bytes)
+                let len_header = ((report.data().len() + core::mem::size_of::<u16>()) as u16).to_le_bytes();
+                Self::write_bus(
+                    &mut self.resources.bus,
+                    self.resources.device_response_timeout,
+                    &len_header,
+                )
+                .await?;
+                Self::write_bus(
+                    &mut self.resources.bus,
+                    self.resources.device_response_timeout,
+                    report.data(),
+                )
+                .await?;
 
-                        Ok(())
-                    }
-                }
+                Ok(())
             }
 
             Opcode::SetReport => {
@@ -808,23 +808,18 @@ impl<
                     ),
                 };
 
-                match self.resources.hid_device.set_report(&set_report).await {
-                    Err(HidError::TriggerReset) => {
-                        trace!("Triggering reset due to HID result timeout");
-                        self.reset().await;
-                        Err(Error::Protocol(ProtocolError::InvalidCommand)) // TODO do we want to aggregate the reset path into one place? Maybe we should just propagate the reset and have the top-level fn do the reset or something
-                    }
-                    Ok(_) => Ok(()), // No response to host in success case
-                }
+                self.resources.hid_device.set_report(&set_report).await?;
+
+                Ok(())
             }
         }
     }
 
     async fn reset(&mut self) {
-        trace!("Executing reset");
+        warn!("HID-I2C: Executing device reset");
         self.resources.hid_device.host_reset().await;
         self.resources.pending_reset = true;
-        self.resources.attn_pin.assert_interrupt().expect("TODO handle attn pin error");
+        self.resources.attn_pin.assert_interrupt();
     }
 }
 
