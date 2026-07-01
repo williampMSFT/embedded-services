@@ -146,13 +146,14 @@ enum HidI2cReportType {
     Feature,
 }
 
-// TODO can this be a tryfrom impl?
-impl HidI2cReportType {
-    fn to_get_type(&self) -> Option<GetHidReportType> {
-        match self {
-            HidI2cReportType::Input => Some(GetHidReportType::Input),
-            HidI2cReportType::Feature => Some(GetHidReportType::Feature),
-            HidI2cReportType::Output => None,
+impl TryFrom<HidI2cReportType> for GetHidReportType {
+    type Error = ProtocolError;
+
+    fn try_from(value: HidI2cReportType) -> Result<Self, Self::Error> {
+        match value {
+            HidI2cReportType::Input => Ok(GetHidReportType::Input),
+            HidI2cReportType::Feature => Ok(GetHidReportType::Feature),
+            HidI2cReportType::Output => Err(ProtocolError::InvalidReportType),
         }
     }
 }
@@ -703,9 +704,7 @@ impl<
                     .resources
                     .hid_device
                     .get_report(
-                        report_type
-                            .to_get_type()
-                            .ok_or(Error::Protocol(ProtocolError::InvalidCommand))?,
+                        report_type.try_into()?,
                         report_id,
                     )
                     .await?;
