@@ -23,7 +23,7 @@ typenum.workspace = true
 zerocopy = { workspace = true, features = ["derive"] }
 
 [features]
-defmt = ["dep:defmt", "embedded-mcu-hal/defmt"]
+defmt = ["dep:defmt", "embedded-mcu-hal/defmt", "embedded-services/defmt"]
 log = ["dep:log", "embedded-services/log"]
 
 [lints]

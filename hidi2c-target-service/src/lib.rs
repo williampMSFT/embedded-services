@@ -393,7 +393,7 @@ impl<
         match result {
             Ok(_) => {}
             Err(Error::Bus(bus_error)) => {
-                error!("HID-I2C: Error during bus operation: {:?}", bus_error);
+                error!("HID-I2C: Error during bus operation: {:?}", embedded_mcu_hal::i2c::target::Error::kind(&bus_error));
                 // TODO what do?
             }
             Err(Error::Protocol(protocol_error)) => {
