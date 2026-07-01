@@ -1,5 +1,5 @@
-use typenum::Max;
 use generic_array::ArrayLength;
+use typenum::Max;
 
 mod sealed {
     /// Traits that derive from this one are not allowed to be implemented by 3rd party code.
