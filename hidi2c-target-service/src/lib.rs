@@ -13,8 +13,6 @@ use embedded_mcu_hal::i2c::target::asynch::I2c as I2cTargetAsync;
 use embedded_services::relay::hid;
 use embedded_services::relay::hid::{GetHidReportType, HidError, HidReport, ReportReceiver, SetHidReport};
 use embedded_services::{error, info, trace, warn};
-use generic_array::ArrayLength;
-use typenum::Max;
 use zerocopy::IntoBytes;
 
 mod device_descriptor;
@@ -27,46 +25,8 @@ use attn_pin_handler::AttnPinHandler;
 mod error;
 use error::*;
 
-mod sealed {
-    /// Traits that derive from this one are not allowed to be implemented by 3rd party code.
-    /// To have those traits implemented, you should satisfy the requirement for their blanket
-    /// implementation instead.
-    pub trait Sealed {}
-}
-
-/// Extension of [`hid::HidDevice`] that computes the max of feature/input and
-/// feature/output report sizes as associated types so we can correctly size our
-/// send/recv buffers.
-///
-/// Any type that implements `hid::HidDevice` will automatically implement this trait -
-/// there's no type that satisfies ArrayLength that doesn't also satisfy these trait bounds.
-/// However, due to some limitations in the Rust type system, we have to spell it out.
-///
-/// We should be able to get rid of all of this once generic_const_exprs stabilises, since
-/// then we don't need any of these trait bounds and can just do the math where we declare
-/// the buffers. At that point, we should also consider moving from ArrayLength to just
-/// const usizes since ArraySize is just a workaround for the lack of generic const expressions.
-///
-pub trait ConstrainedHidDevice: hid::HidDevice + sealed::Sealed {
-    /// `max(FeatureReportMaxSize, InputReportMaxSize)`.
-    type MaxInputOrFeatureSize: ArrayLength;
-    /// `max(FeatureReportMaxSize, OutputReportMaxSize)`.
-    type MaxOutputOrFeatureSize: ArrayLength;
-}
-
-impl<T> ConstrainedHidDevice for T
-where
-    T: hid::HidDevice,
-    T::FeatureReportMaxSize: Max<T::InputReportMaxSize>,
-    T::FeatureReportMaxSize: Max<T::OutputReportMaxSize>,
-    <T::FeatureReportMaxSize as Max<T::InputReportMaxSize>>::Output: ArrayLength,
-    <T::FeatureReportMaxSize as Max<T::OutputReportMaxSize>>::Output: ArrayLength,
-{
-    type MaxInputOrFeatureSize = <T::FeatureReportMaxSize as Max<T::InputReportMaxSize>>::Output;
-    type MaxOutputOrFeatureSize = <T::FeatureReportMaxSize as Max<T::OutputReportMaxSize>>::Output;
-}
-
-impl<T> sealed::Sealed for T where T: ConstrainedHidDevice {}
+mod constrained_hid_device;
+pub use constrained_hid_device::ConstrainedHidDevice;
 
 /// HID-I2C register addresses as specified in section 5.1 of the HID-I2C spec.
 /// These specific values are our convention, not from the HID-I2C spec, but section 4.2 indicates
