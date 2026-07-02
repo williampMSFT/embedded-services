@@ -120,20 +120,106 @@ impl<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: 
     }
 }
 
+/// Wrapper for the I2C trait that automatically handles timeouts and recovery
+struct TimeoutBus<Bus: I2cTargetAsync> {
+    bus: Bus,
+
+    timeout_settings: TimeoutSettings
+}
+
+impl<Bus: I2cTargetAsync> TimeoutBus<Bus> {
+    // TODO @Felipe these are going to need to be tweaked when felipe's fix to the i2c trait goes in
+
+    /// Wait for the next controller-initiated event with no timeout.
+    fn listen_indefinitely(&mut self) -> impl core::future::Future<Output = Result<Request, Bus::Error>> + '_ {
+        self.bus.listen()
+    }
+
+    /// Wait for the controller to address us mid-transaction, applying the device-response timeout
+    /// and skipping repeated-start edges.
+    async fn listen_for_response(&mut self) -> Result<Request, Error<Bus::Error>> {
+        loop {
+            let result = with_timeout(self.timeout_settings.device_response_timeout, self.bus.listen()).await?;
+            let result = result.map_err(|e| Error::Bus(e))?;
+            if let Request::RepeatedStart(_a) = result {
+                continue;
+            }
+
+            return Ok(result);
+        }
+    }
+
+    /// Read bytes the host is writing to us, applying the data-read timeout and recovering the bus on failure.
+    async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Error<Bus::Error>> {
+        match with_timeout(self.timeout_settings.data_read_timeout, self.bus.respond_to_write(buffer)).await {
+            // Timed out waiting for the controller to drive the transfer.
+            Err(_timeout_error) => {
+                error!("Read request timeout");
+                self.bus.recover().await.map_err(|e| Error::Bus(e))?;
+                Err(Error::Protocol(ProtocolError::Timeout))
+            }
+            // Controller finished writing; report how many bytes we drained.
+            Ok(Ok(
+                status @ (WriteStatus::Stopped(bytes) | WriteStatus::Restarted(bytes) | WriteStatus::BufferFull(bytes)),
+            )) => {
+                trace!("Host issued write command: {:?}", status);
+                Ok(bytes)
+            }
+            // Some other write status we don't expect while reading.
+            Ok(Ok(status)) => {
+                error!("Unexpected write status: {:?}", status); // TODO @Felipe this is only necessary because WriteStatus is marked non_exhaustive. Is that really the right thing for it to be? Under what circumstances would it make sense to add a new status there that isn't a breaking change?
+                Err(Error::Protocol(ProtocolError::InvalidData))
+            }
+            // The bus peripheral itself reported an error.
+            Ok(Err(e)) => {
+                error!("Error during bus read");
+                Err(Error::Bus(e))
+            }
+        }
+    }
+
+    /// Write all of `buffer` to the host, padding with zeros if the host asks for more bytes.
+    async fn write(&mut self, buffer: &[u8]) -> Result<(), Error<Bus::Error>> {
+        let mut write_buffer: &[u8] = buffer;
+        const PADDING_BUFFER: &[u8] = &[0u8; 8];
+        while self.write_unterminated(write_buffer).await? {
+            write_buffer = PADDING_BUFFER;
+            trace!("Emitting a padding byte");
+        }
+        Ok(())
+    }
+
+    /// Write `buffer` to the host; returns true if the host requested more bytes than we provided.
+    async fn write_unterminated(&mut self, buffer: &[u8]) -> Result<bool, Error<Bus::Error>> {
+        match with_timeout(self.timeout_settings.device_response_timeout, self.bus.respond_to_read(buffer)).await {
+            Err(_timeout_error) => {
+                error!("Write request timeout");
+                self.bus.recover().await.map_err(|e| Error::Bus(e))?;
+                Err(Error::Protocol(ProtocolError::Timeout))
+            }
+            Ok(result) => result
+                .map(|read_status| match read_status {
+                    ReadStatus::NeedMore(_) => {
+                        trace!("host requested more bytes than we provided");
+                        true
+                    }
+                    _ => false,
+                })
+                .map_err(|e| Error::Bus(e)),
+        }
+    }
+}
+
 /// Service runner for the HID-I2C service. You must call run() on the runner to drive the service.
 pub struct Runner<'hw, Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice>
 {
-    bus: Bus,
+    bus: TimeoutBus<Bus>,
     attn_pin: AttnPinHandler<AttnPin>,
     hid_device: HidDevice,
     device_descriptor: DeviceDescriptor,
 
     /// Buffer for receiving messages.
     write_buf: generic_array::GenericArray<u8, HidDevice::MaxOutputOrFeatureSize>,
-
-    device_response_timeout: Duration,
-    /// Timeout for data reads from the host.
-    data_read_timeout: Duration,
 
     /// True if a reset has been triggered but not yet acknowledged by the host
     pending_reset: bool,
@@ -162,7 +248,7 @@ impl<
                     }
                 };
                 embassy_futures::select::select3(
-                    self.bus.listen(),
+                    self.bus.listen_indefinitely(),
                     input_report_ready_future,
                     self.resources.reset_signal.wait(),
                 )
@@ -203,86 +289,6 @@ impl<
     HidDevice: ConstrainedHidDevice + 'hw,
 > Runner<'hw, Bus, AttnPin, HidDevice>
 {
-    // TODO @Felipe these are going to need to be tweaked when felipe's fix to the i2c trait goes in
-    // TODO these are associated functions because `buffer` is often using a borrow on self (i.e. read_bus(self.bus, self.buffer), but this feels a bit awkward. figure out if there's a more ergonomic way to describe this pattern
-    async fn read_bus(bus: &mut Bus, timeout: Duration, buffer: &mut [u8]) -> Result<usize, Error<Bus::Error>> {
-        let result = match with_timeout(timeout, bus.respond_to_write(buffer)).await {
-            // Timed out waiting for the controller to drive the transfer.
-            Err(_timeout_error) => {
-                error!("Read request timeout");
-                bus.recover().await.map_err(|e| Error::Bus(e))?;
-                Err(Error::Protocol(ProtocolError::Timeout))
-            }
-            // Controller finished writing; report how many bytes we drained.
-            Ok(Ok(
-                status @ (WriteStatus::Stopped(bytes) | WriteStatus::Restarted(bytes) | WriteStatus::BufferFull(bytes)),
-            )) => {
-                trace!("Host issued write command: {:?}", status);
-                Ok(bytes)
-            }
-            // Some other write status we don't expect while reading.
-            Ok(Ok(status)) => {
-                error!("Unexpected write status: {:?}", status); // TODO @Felipe this is only necessary because WriteStatus is marked non_exhaustive. Is that really the right thing for it to be? Under what circumstances would it make sense to add a new status there that isn't a breaking change?
-                Err(Error::Protocol(ProtocolError::InvalidData))
-            }
-            // The bus peripheral itself reported an error.
-            Ok(Err(e)) => {
-                error!("Error during bus read");
-                Err(Error::Bus(e))
-            }
-        };
-
-        result
-    }
-
-    /// Writes the specified bytes to the bus. If the host requests more bytes, pads with 0s until the host is satisfied.
-    async fn write_bus(bus: &mut Bus, timeout: Duration, buffer: &[u8]) -> Result<(), Error<Bus::Error>> {
-        let mut write_buffer = &buffer;
-        const PADDING_BUFFER: &[u8] = &[0u8; 8];
-        while Self::write_bus_unterminated(bus, timeout, write_buffer).await? {
-            write_buffer = &PADDING_BUFFER;
-            trace!("Emitting a padding byte");
-        }
-        Ok(())
-    }
-
-    /// Writes the specified bytes to the bus. If the host requests more bytes, returns true, otherwise false.
-    async fn write_bus_unterminated(
-        bus: &mut Bus,
-        timeout: Duration,
-        buffer: &[u8],
-    ) -> Result<bool, Error<Bus::Error>> {
-        match with_timeout(timeout, bus.respond_to_read(buffer)).await {
-            Err(_timeout_error) => {
-                error!("Write request timeout");
-                bus.recover().await.map_err(|e| Error::Bus(e))?;
-                Err(Error::Protocol(ProtocolError::Timeout))
-            }
-            Ok(result) => result
-                .map(|read_status| match read_status {
-                    ReadStatus::NeedMore(_) => {
-                        trace!("host requested more bytes than we provided");
-                        true
-                    }
-                    _ => false,
-                })
-                .map_err(|e| Error::Bus(e)),
-        }
-    }
-
-    /// Waits for the controller to command us over the bus, with timeout handling.
-    async fn listen_bus(bus: &mut Bus, timeout: Duration) -> Result<Request, Error<Bus::Error>> {
-        loop {
-            let result = with_timeout(timeout, bus.listen()).await?;
-            let result = result.map_err(|e| Error::Bus(e))?;
-            if let Request::RepeatedStart(_a) = result {
-                continue;
-            }
-
-            return Ok(result);
-        }
-    }
-
     async fn process_request(&mut self, request: Request) {
         // TODO unlike the old trait where the address was fixed, this one can get multiple addresses?
         //      May need to have some way to split the bus resources across multiple hidi2c services and/or
@@ -327,7 +333,7 @@ impl<
 
     async fn process_register_access(&mut self) -> Result<(), Error<Bus::Error>> {
         let mut reg = [0u8; 2];
-        Self::read_bus(&mut self.bus, self.data_read_timeout, &mut reg).await?;
+        self.bus.read(&mut reg).await?;
 
         let register = HidI2cRegister::try_from(u16::from_le_bytes(reg))
             .map_err(|_| Error::Protocol(ProtocolError::InvalidRegisterAddress))?;
@@ -336,19 +342,14 @@ impl<
         match register {
             HidI2cRegister::DeviceDescriptor => {
                 // TODO do we need to handle the case where the host decides to talk to someone else in the middle of talking to us?
-                let request = Self::listen_bus(&mut self.bus, self.device_response_timeout).await?;
+                let request = self.bus.listen_for_response().await?;
                 match request {
                     Request::Read(_address) => {
                         trace!(
                             "Responding to request for device descriptor with {} bytes",
                             self.device_descriptor.as_bytes().len()
                         );
-                        Self::write_bus(
-                            &mut self.bus,
-                            self.device_response_timeout,
-                            self.device_descriptor.as_bytes(),
-                        )
-                        .await?;
+                        self.bus.write(self.device_descriptor.as_bytes()).await?;
 
                         Ok(())
                     }
@@ -362,16 +363,11 @@ impl<
                 }
             }
             HidI2cRegister::ReportDescriptor => {
-                match Self::listen_bus(&mut self.bus, self.device_response_timeout).await? {
+                match self.bus.listen_for_response().await? {
                     // TODO do we need to handle the case where the host decides to talk to someone else in the middle of talking to us?
                     Request::Read(_address) => {
                         trace!("Responding to request for report descriptor");
-                        Self::write_bus(
-                            &mut self.bus,
-                            self.device_response_timeout,
-                            self.hid_device.report_descriptor().as_bytes(),
-                        )
-                        .await?;
+                        self.bus.write(self.hid_device.report_descriptor().as_bytes()).await?;
                         Ok(())
                     }
                     _ => {
@@ -395,7 +391,7 @@ impl<
     /// Process a request for an input report that we've asserted an interrupt for (i.e. not a request for a specific input report ID)
     async fn process_input_report_read(&mut self) -> Result<(), Error<Bus::Error>> {
         info!("Processing normal input report request");
-        let read_request = Self::listen_bus(&mut self.bus, self.device_response_timeout).await?;
+        let read_request = self.bus.listen_for_response().await?;
         if let Request::Read(_address) = read_request {
             self.reply_with_input_report().await
         } else {
@@ -412,7 +408,7 @@ impl<
         if self.pending_reset {
             info!("Processing first input report read after reset");
             // We need to acknowledge that we've completed a reset by writing back 0's - see section 7.2.1 of the HID spec
-            Self::write_bus(&mut self.bus, self.device_response_timeout, &[00, 00]).await?;
+            self.bus.write(&[00, 00]).await?;
 
             self.pending_reset = false;
             self.attn_pin.clear_interrupt();
@@ -446,9 +442,8 @@ impl<
             header_slice,
             report.data()
         );
-        Self::write_bus_unterminated(&mut self.bus, self.device_response_timeout, header_slice).await?;
-
-        Self::write_bus(&mut self.bus, self.device_response_timeout, report.data()).await?;
+        self.bus.write_unterminated(header_slice).await?;
+        self.bus.write(report.data()).await?;
 
         if self.hid_device.receiver().is_empty() {
             self.attn_pin.clear_interrupt();
@@ -471,13 +466,13 @@ impl<
 
         let header_len = header_buf_slice.len();
 
-        Self::read_bus(&mut self.bus, self.data_read_timeout, &mut header_buf_slice).await?;
+        self.bus.read(&mut header_buf_slice).await?;
 
         let [len_low, len_high, report_id] = write_header_buf;
         let length = u16::from_le_bytes([len_low, len_high]) as usize - header_len; // Note: per HID spec, the length field needs to include its own length (2 bytes) and the report ID (1 byte)
         trace!("Reading {} bytes", length);
 
-        let read_result = Self::read_bus(&mut self.bus, self.data_read_timeout, &mut self.write_buf).await?;
+        let read_result = self.bus.read(&mut self.write_buf).await?;
 
         if read_result != length as usize {
             error!("Expected to read {} bytes but got {}", length, read_result);
@@ -510,12 +505,7 @@ impl<
             report_id
         } else {
             let mut report_id = 0u8;
-            Self::read_bus(
-                &mut self.bus,
-                self.data_read_timeout,
-                core::slice::from_mut(&mut report_id),
-            )
-            .await?;
+            self.bus.read(core::slice::from_mut(&mut report_id)).await?;
             embedded_services::relay::hid::ReportId(report_id)
         };
 
@@ -525,7 +515,7 @@ impl<
     async fn process_command(&mut self) -> Result<(), Error<Bus::Error>> {
         let [command_byte, opcode_byte] = {
             let mut command_header_buffer = [0u8; 2];
-            Self::read_bus(&mut self.bus, self.data_read_timeout, &mut command_header_buffer).await?;
+            self.bus.read(&mut command_header_buffer).await?;
             command_header_buffer
         };
 
@@ -552,8 +542,8 @@ impl<
                 // Note: per HID spec, the length field needs to include its own length (2 bytes)
                 let len_header =
                     (report.data().len() as u16 + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES).to_le_bytes();
-                Self::write_bus(&mut self.bus, self.device_response_timeout, &len_header).await?;
-                Self::write_bus(&mut self.bus, self.device_response_timeout, report.data()).await?;
+                self.bus.write(&len_header).await?;
+                self.bus.write(report.data()).await?;
 
                 Ok(())
             }
@@ -562,20 +552,18 @@ impl<
                 trace!("Processing set report command");
                 let (report_type, report_id) = self.get_command_report_header(command_byte).await?;
                 let mut len_header = [0u8; core::mem::size_of::<u16>()];
-                Self::read_bus(&mut self.bus, self.data_read_timeout, &mut len_header).await?;
+                self.bus.read(&mut len_header).await?;
 
                 // Note: per HID spec, the length field relayed over the wire needs to include its own length (2 bytes)
                 let report_size =
                     (u16::from_le_bytes(len_header) - device_descriptor::HID_REPORT_HEADER_SIZE_BYTES) as usize;
-                Self::read_bus(
-                    &mut self.bus,
-                    self.data_read_timeout,
-                    &mut self
-                        .write_buf
-                        .get_mut(..report_size)
-                        .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
-                )
-                .await?;
+                self.bus
+                    .read(
+                        self.write_buf
+                            .get_mut(..report_size)
+                            .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
+                    )
+                    .await?;
 
                 let set_report = match report_type {
                     HidI2cReportType::Input => {
@@ -651,13 +639,14 @@ impl<
                 _phantom: PhantomData,
             },
             Runner {
-                bus,
+                bus: TimeoutBus {
+                    bus,
+                    timeout_settings
+                },
                 attn_pin: AttnPinHandler::new(attn_pin),
                 hid_device,
                 device_descriptor,
                 write_buf: generic_array::GenericArray::default(),
-                device_response_timeout: timeout_settings.device_response_timeout,
-                data_read_timeout: timeout_settings.data_read_timeout,
                 pending_reset: false, // The host is responsible for explicitly resetting us at boot, so we start in a non-reset state
                 resources,
             },
