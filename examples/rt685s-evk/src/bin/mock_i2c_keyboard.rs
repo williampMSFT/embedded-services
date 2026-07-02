@@ -215,8 +215,9 @@ impl embedded_services::relay::hid::HidDevice for MockKeyboardHidRelay<'_> {
         Ok(())
     }
 
-    async fn host_reset(&mut self) {
+    async fn reset(&mut self) {
         info!("Received reset command");
+        self.service.receiver().clear();
     }
 }
 

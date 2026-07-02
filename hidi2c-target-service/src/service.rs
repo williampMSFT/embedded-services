@@ -595,7 +595,7 @@ impl<
 
     async fn reset(&mut self) {
         warn!("HID-I2C: Executing device reset");
-        self.hid_device.host_reset().await;
+        self.hid_device.reset().await;
         self.pending_reset = true;
         self.attn_pin.assert_interrupt();
     }

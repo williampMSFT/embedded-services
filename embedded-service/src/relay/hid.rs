@@ -202,7 +202,7 @@ pub trait HidDevice {
         report_id: ReportId,
     ) -> impl core::future::Future<
         Output = Result<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>, HidError>,
-    >; // TODO: I believe the Rust compiler will do RVO for this, but verify in compiler explorer
+    >;
 
     /// Respond to a command from the host to handle a particular output/feature report.
     fn set_report(
@@ -219,8 +219,14 @@ pub trait HidDevice {
         state: HidDevicePowerState,
     ) -> impl core::future::Future<Output = Result<(), HidError>>;
 
-    /// Called when the host commands a reset, or when a peer HidDevice in an aggregate triggers a device-initiated reset.
-    fn host_reset(&mut self) -> impl core::future::Future<Output = ()>;
+    /// Called when the device should reset its state.  The semantics of reset are device-specific, but
+    /// should generally result in clearing any pending reports and returning to a known-good state.
+    /// This can be called under the following circumstances:
+    ///   1. The host commands a reset, which happens once at startup and can happen again at any time
+    ///   2. The implementor of this trait returned HidError::TriggerReset from one of its functions, thereby requesting a reset
+    ///   3. A peer HidDevice in an aggregate device triggers a device-initiated reset (see impl_odp_hid_aggregate_device! for details)
+    ///
+    fn reset(&mut self) -> impl core::future::Future<Output = ()>;
 }
 
 // TODO we need to expand on how we're going to present HidReportDescriptors. Initially, it might be a [u8;N] that's just the binary

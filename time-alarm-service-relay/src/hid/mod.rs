@@ -79,7 +79,7 @@ impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blockin
         Ok(())
     }
 
-    async fn host_reset(&mut self) {
+    async fn reset(&mut self) {
         // TODO Empty out tx queue
         todo!()
     }
