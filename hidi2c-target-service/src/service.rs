@@ -95,9 +95,17 @@ impl HidI2cReportCommandHeader {
     }
 }
 
+/// Resources used by the service
+struct InnerResources {
+    reset_signal: embassy_sync::signal::Signal<embedded_services::GlobalRawMutex, ()>,
+}
+
 /// Memory required for the HID-I2C target service.
 pub struct Resources<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice> {
-    service_resources: Option<ServiceResources>,
+    inner: Option<InnerResources>,
+
+    // We don't currently need these to be shared between the runner and the service, but we may in the future,
+    // and being generic over them now means that we can move stuff in here later without a breaking interface change.
     _phantom: PhantomData<(Bus, AttnPin, HidDevice)>,
 }
 
@@ -106,15 +114,10 @@ impl<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: 
 {
     fn default() -> Self {
         Self {
-            service_resources: None,
+            inner: None,
             _phantom: PhantomData,
         }
     }
-}
-
-/// Resources used by the service
-struct ServiceResources {
-    reset_signal: embassy_sync::signal::Signal<embedded_services::GlobalRawMutex, ()>,
 }
 
 /// Service runner for the HID-I2C service. You must call run() on the runner to drive the service.
@@ -135,7 +138,7 @@ pub struct Runner<'hw, Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::Outp
     /// True if a reset has been triggered but not yet acknowledged by the host
     pending_reset: bool,
 
-    reset_signal: &'hw embassy_sync::signal::Signal<embedded_services::GlobalRawMutex, ()>,
+    resources: &'hw InnerResources,
 }
 
 impl<
@@ -161,7 +164,7 @@ impl<
                 embassy_futures::select::select3(
                     self.bus.listen(),
                     input_report_ready_future,
-                    self.reset_signal.wait(),
+                    self.resources.reset_signal.wait(),
                 )
                 .await
             };
@@ -662,10 +665,8 @@ impl<
 #[derive(Clone, Copy)]
 pub struct Service<'hw, Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: ConstrainedHidDevice>
 {
-    resources: &'hw ServiceResources,
-    _phantom_bus: core::marker::PhantomData<Bus>,
-    _phantom_attn_pin: core::marker::PhantomData<AttnPin>,
-    _phantom_hid_device: core::marker::PhantomData<HidDevice>,
+    resources: &'hw InnerResources,
+    _phantom: core::marker::PhantomData<(Bus, AttnPin, HidDevice)>,
 }
 
 impl<
@@ -688,16 +689,14 @@ impl<
     ) -> Result<(Self, Runner<'hw, Bus, AttnPin, HidDevice>), core::convert::Infallible> {
         let device_descriptor = DeviceDescriptor::new(&hid_device, hwinfo);
 
-        let service_resources: &ServiceResources = storage.service_resources.insert(ServiceResources {
+        let resources = storage.inner.insert(InnerResources {
             reset_signal: embassy_sync::signal::Signal::new(),
         });
 
         Ok((
             Service {
-                resources: service_resources,
-                _phantom_bus: PhantomData,
-                _phantom_attn_pin: PhantomData,
-                _phantom_hid_device: PhantomData,
+                resources,
+                _phantom: PhantomData,
             },
             Runner {
                 bus,
@@ -708,7 +707,7 @@ impl<
                 device_response_timeout: timeout_settings.device_response_timeout,
                 data_read_timeout: timeout_settings.data_read_timeout,
                 pending_reset: false, // The host is responsible for explicitly resetting us at boot, so we start in a non-reset state
-                reset_signal: &service_resources.reset_signal,
+                resources,
             },
         ))
     }
