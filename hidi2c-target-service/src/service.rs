@@ -196,16 +196,25 @@ impl<
             };
             match event {
                 embassy_futures::select::Either3::First(bus_request) => {
-                    trace!("Processing request from host");
-                    self.process_request(bus_request.expect("TODO handle error recovery"))
-                        .await;
+                    trace!("HID-I2C: Processing request from host");
+                    match bus_request {
+                        Ok(request) => {
+                            self.process_request(request).await;
+                        }
+                        Err(bus_error) => {
+                            error!(
+                                "HID-I2C: Error during bus operation: {:?}",
+                                embedded_mcu_hal::i2c::target::Error::kind(&bus_error)
+                            );
+                        }
+                    }
                 }
                 embassy_futures::select::Either3::Second(()) => {
-                    trace!("Signalling host that we have an input report ready");
+                    trace!("HID-I2C: Signalling host that an input report is ready");
                     self.resources.attn_pin.assert_interrupt();
                 }
                 embassy_futures::select::Either3::Third(()) => {
-                    trace!("Received reset request");
+                    trace!("HID-I2C: Received reset request");
                     self.reset().await;
                 }
             }
@@ -220,14 +229,14 @@ impl<
     HidDevice: ConstrainedHidDevice + 'hw,
 > Runner<'hw, Bus, AttnPin, HidDevice>
 {
-    // TODO these are going to need to be tweaked when felipe's fix to the i2c trait goes in
+    // TODO @Felipe these are going to need to be tweaked when felipe's fix to the i2c trait goes in
     // TODO these are associated functions because `buffer` is often using a borrow on self (i.e. read_bus(self.bus, self.buffer), but this feels a bit awkward. figure out if there's a more ergonomic way to describe this pattern
     async fn read_bus(bus: &mut Bus, timeout: Duration, buffer: &mut [u8]) -> Result<usize, Error<Bus::Error>> {
         let result = match with_timeout(timeout, bus.respond_to_write(buffer)).await {
             // Timed out waiting for the controller to drive the transfer.
             Err(_timeout_error) => {
                 error!("Read request timeout");
-                bus.recover().await.expect("TODO handle bus recovery error");
+                bus.recover().await.map_err(|e| Error::Bus(e))?;
                 Err(Error::Protocol(ProtocolError::Timeout))
             }
             // Controller finished writing; report how many bytes we drained.
@@ -239,7 +248,7 @@ impl<
             }
             // Some other write status we don't expect while reading.
             Ok(Ok(status)) => {
-                error!("Unexpected write status: {:?}", status); // TODO this is only necessary because WriteStatus is marked non_exhaustive. Is that really the right thing for it to be? Under what circumstances would it make sense to add a new status there that isn't a breaking change?
+                error!("Unexpected write status: {:?}", status); // TODO @Felipe this is only necessary because WriteStatus is marked non_exhaustive. Is that really the right thing for it to be? Under what circumstances would it make sense to add a new status there that isn't a breaking change?
                 Err(Error::Protocol(ProtocolError::InvalidData))
             }
             // The bus peripheral itself reported an error.
@@ -272,7 +281,7 @@ impl<
         match with_timeout(timeout, bus.respond_to_read(buffer)).await {
             Err(_timeout_error) => {
                 error!("Write request timeout");
-                bus.recover().await.expect("TODO handle bus recovery error");
+                bus.recover().await.map_err(|e| Error::Bus(e))?;
                 Err(Error::Protocol(ProtocolError::Timeout))
             }
             Ok(result) => result
@@ -315,20 +324,11 @@ impl<
                 self.process_register_access().await
             }
             Request::Read(_address) => {
-                trace!("HID-I2C: Host requested input report");
+                trace!("HID-I2C: Processing request for input report");
                 self.reply_with_input_report().await
             }
-
-            // TODO this is in line with what we were doing for the I2cCommand::Probe command in the old hid service, but it's not
-            //      clear to me if that was correct or how the other enum variants map to that.
-            //      Figure out if we need to handle any of the following:
-            //          Request::RepeatedStart(prev_address) // Continue transaction - I think this is targeted at other masters on the bus?
-            //          Request::Stop(address)               // End of transaction - I think this is targeted at other masters on the bus?
-            //          Request::GeneralCall                 // I don't know what this is
-            //          Request::SmbusAlert                  // I don't know what this is
-            //
             _ => {
-                info!("HID-I2C: Not handling command {:?}", request);
+                trace!("HID-I2C: Ignoring command type {:?}", request);
                 return;
             }
         };
@@ -397,8 +397,7 @@ impl<
                             self.resources.device_response_timeout,
                             self.resources.hid_device.report_descriptor().as_bytes(),
                         )
-                        .await
-                        .expect("TODO handle write error");
+                        .await?;
                         Ok(())
                     }
                     _ => {
@@ -434,7 +433,7 @@ impl<
         }
     }
 
-    // Call this after listening. TODO figure out if we can enforce this in the type system somehow, maybe take a request or something
+    // Respond to the host with the next input report.
     async fn reply_with_input_report(&mut self) -> Result<(), Error<Bus::Error>> {
         if self.resources.pending_reset {
             info!("Processing first input report read after reset");
