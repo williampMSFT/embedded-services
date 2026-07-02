@@ -54,4 +54,3 @@ impl<BusError> From<TimeoutError> for Error<BusError> {
         Error::Protocol(ProtocolError::Timeout)
     }
 }
-

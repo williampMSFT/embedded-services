@@ -412,12 +412,7 @@ impl<
         if self.pending_reset {
             info!("Processing first input report read after reset");
             // We need to acknowledge that we've completed a reset by writing back 0's - see section 7.2.1 of the HID spec
-            Self::write_bus(
-                &mut self.bus,
-                self.device_response_timeout,
-                &[00, 00],
-            )
-            .await?;
+            Self::write_bus(&mut self.bus, self.device_response_timeout, &[00, 00]).await?;
 
             self.pending_reset = false;
             self.attn_pin.clear_interrupt();
@@ -451,19 +446,9 @@ impl<
             header_slice,
             report.data()
         );
-        Self::write_bus_unterminated(
-            &mut self.bus,
-            self.device_response_timeout,
-            header_slice,
-        )
-        .await?;
+        Self::write_bus_unterminated(&mut self.bus, self.device_response_timeout, header_slice).await?;
 
-        Self::write_bus(
-            &mut self.bus,
-            self.device_response_timeout,
-            report.data(),
-        )
-        .await?;
+        Self::write_bus(&mut self.bus, self.device_response_timeout, report.data()).await?;
 
         if self.hid_device.receiver().is_empty() {
             self.attn_pin.clear_interrupt();
@@ -486,23 +471,13 @@ impl<
 
         let header_len = header_buf_slice.len();
 
-        Self::read_bus(
-            &mut self.bus,
-            self.data_read_timeout,
-            &mut header_buf_slice,
-        )
-        .await?;
+        Self::read_bus(&mut self.bus, self.data_read_timeout, &mut header_buf_slice).await?;
 
         let [len_low, len_high, report_id] = write_header_buf;
         let length = u16::from_le_bytes([len_low, len_high]) as usize - header_len; // Note: per HID spec, the length field needs to include its own length (2 bytes) and the report ID (1 byte)
         trace!("Reading {} bytes", length);
 
-        let read_result = Self::read_bus(
-            &mut self.bus,
-            self.data_read_timeout,
-            &mut self.write_buf,
-        )
-        .await?;
+        let read_result = Self::read_bus(&mut self.bus, self.data_read_timeout, &mut self.write_buf).await?;
 
         if read_result != length as usize {
             error!("Expected to read {} bytes but got {}", length, read_result);
@@ -550,12 +525,7 @@ impl<
     async fn process_command(&mut self) -> Result<(), Error<Bus::Error>> {
         let [command_byte, opcode_byte] = {
             let mut command_header_buffer = [0u8; 2];
-            Self::read_bus(
-                &mut self.bus,
-                self.data_read_timeout,
-                &mut command_header_buffer,
-            )
-            .await?;
+            Self::read_bus(&mut self.bus, self.data_read_timeout, &mut command_header_buffer).await?;
             command_header_buffer
         };
 
@@ -577,26 +547,13 @@ impl<
                 trace!("Processing get report command");
 
                 let (report_type, report_id) = self.get_command_report_header(command_byte).await?;
-                let report = self
-                    .hid_device
-                    .get_report(report_type.try_into()?, report_id)
-                    .await?;
+                let report = self.hid_device.get_report(report_type.try_into()?, report_id).await?;
 
                 // Note: per HID spec, the length field needs to include its own length (2 bytes)
                 let len_header =
                     (report.data().len() as u16 + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES).to_le_bytes();
-                Self::write_bus(
-                    &mut self.bus,
-                    self.device_response_timeout,
-                    &len_header,
-                )
-                .await?;
-                Self::write_bus(
-                    &mut self.bus,
-                    self.device_response_timeout,
-                    report.data(),
-                )
-                .await?;
+                Self::write_bus(&mut self.bus, self.device_response_timeout, &len_header).await?;
+                Self::write_bus(&mut self.bus, self.device_response_timeout, report.data()).await?;
 
                 Ok(())
             }
@@ -605,12 +562,7 @@ impl<
                 trace!("Processing set report command");
                 let (report_type, report_id) = self.get_command_report_header(command_byte).await?;
                 let mut len_header = [0u8; core::mem::size_of::<u16>()];
-                Self::read_bus(
-                    &mut self.bus,
-                    self.data_read_timeout,
-                    &mut len_header,
-                )
-                .await?;
+                Self::read_bus(&mut self.bus, self.data_read_timeout, &mut len_header).await?;
 
                 // Note: per HID spec, the length field relayed over the wire needs to include its own length (2 bytes)
                 let report_size =

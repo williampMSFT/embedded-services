@@ -95,21 +95,27 @@ impl DeviceDescriptor {
             w_report_desc_length: hid_device.report_descriptor().as_bytes().len() as u16,
             w_report_desc_register: crate::HidI2cRegister::ReportDescriptor as u16,
             w_input_register: crate::HidI2cRegister::Input.into(),
+
+            // TODO when we have the HID support library, assert here that descriptor matches the max size constant
+            //      and pull the value here from the descriptor rather than the max size constant
             w_max_input_length: HidDevice::InputReportMaxSize::USIZE as u16
                 + HID_REPORT_HEADER_SIZE_BYTES
                 + if hid_device.report_descriptor().input_id_is_implicit() {
                     0
                 } else {
                     HID_REPORT_ID_SIZE_BYTES
-                }, // TODO figure out if this is the right place to assert that the descriptor matches the constants; also, maybe this should come from the dynamic descriptor?
+                },
             w_output_register: crate::HidI2cRegister::Output.into(),
+
+            // TODO when we have the HID support library, assert here that descriptor matches the max size constant
+            //      and pull the value here from the descriptor rather than the max size constant
             w_max_output_length: HidDevice::OutputReportMaxSize::USIZE as u16
                 + HID_REPORT_HEADER_SIZE_BYTES
                 + if hid_device.report_descriptor().output_id_is_implicit() {
                     0
                 } else {
                     HID_REPORT_ID_SIZE_BYTES
-                }, // TODO figure out if this is the right place to assert that the descriptor matches the constants; also, maybe this should come from the dynamic descriptor?
+                },
             w_command_register: crate::HidI2cRegister::Command.into(),
             w_data_register: crate::HidI2cRegister::Data.into(),
             w_vendor_id: hwinfo.vendor_id.value(),
