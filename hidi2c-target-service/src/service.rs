@@ -140,7 +140,7 @@ impl<Bus: I2cTargetAsync> TimeoutBus<Bus> {
     async fn listen_for_response(&mut self) -> Result<Request, Error<Bus::Error>> {
         loop {
             let result = with_timeout(self.timeout_settings.device_response_timeout, self.bus.listen()).await?;
-            let result = result.map_err(|e| Error::Bus(e))?;
+            let result = result.map_err(Error::Bus)?;
             if let Request::RepeatedStart(_a) = result {
                 continue;
             }
@@ -160,7 +160,7 @@ impl<Bus: I2cTargetAsync> TimeoutBus<Bus> {
             // Timed out waiting for the controller to drive the transfer.
             Err(_timeout_error) => {
                 error!("Read request timeout");
-                self.bus.recover().await.map_err(|e| Error::Bus(e))?;
+                self.bus.recover().await.map_err(Error::Bus)?;
                 Err(Error::Protocol(ProtocolError::Timeout))
             }
             // Controller finished writing; report how many bytes we drained.
@@ -204,7 +204,7 @@ impl<Bus: I2cTargetAsync> TimeoutBus<Bus> {
         {
             Err(_timeout_error) => {
                 error!("Write request timeout");
-                self.bus.recover().await.map_err(|e| Error::Bus(e))?;
+                self.bus.recover().await.map_err(Error::Bus)?;
                 Err(Error::Protocol(ProtocolError::Timeout))
             }
             Ok(result) => result
@@ -215,7 +215,7 @@ impl<Bus: I2cTargetAsync> TimeoutBus<Bus> {
                     }
                     _ => false,
                 })
-                .map_err(|e| Error::Bus(e)),
+                .map_err(Error::Bus),
         }
     }
 }
@@ -476,7 +476,7 @@ impl<
     async fn process_output_report_write(&mut self) -> Result<(), Error<Bus::Error>> {
         let mut write_header_buf = [0u8; (device_descriptor::HID_REPORT_HEADER_SIZE_BYTES
             + device_descriptor::HID_REPORT_ID_SIZE_BYTES) as usize];
-        let mut header_buf_slice = if self.hid_device.report_descriptor().output_id_is_implicit() {
+        let header_buf_slice = if self.hid_device.report_descriptor().output_id_is_implicit() {
             // NOTE: If there is no report ID because we only have one report, we call it 0.
             write_header_buf
                 .get_mut(..2)
@@ -487,7 +487,7 @@ impl<
 
         let header_len = header_buf_slice.len();
 
-        self.bus.read(&mut header_buf_slice).await?;
+        self.bus.read(header_buf_slice).await?;
 
         let [len_low, len_high, report_id] = write_header_buf;
         let length = u16::from_le_bytes([len_low, len_high]) as usize - header_len; // Note: per HID spec, the length field needs to include its own length (2 bytes) and the report ID (1 byte)
@@ -495,7 +495,7 @@ impl<
 
         let read_result = self.bus.read(&mut self.write_buf).await?;
 
-        if read_result != length as usize {
+        if read_result != length {
             error!("Expected to read {} bytes but got {}", length, read_result);
             return Err(Error::Protocol(ProtocolError::InvalidSize));
         }
@@ -504,9 +504,9 @@ impl<
         let output_report = embedded_services::relay::hid::SetHidReport::Output(
             HidReport::new(
                 embedded_services::relay::hid::ReportId(report_id),
-                &self
+                self
                     .write_buf
-                    .get(..length as usize)
+                    .get(..length)
                     .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
             )
             .map_err(|_| Error::Protocol(ProtocolError::InvalidSize))?,
@@ -593,14 +593,14 @@ impl<
                     }
                     HidI2cReportType::Output => SetHidReport::Output(HidReport::new(
                         report_id,
-                        &self
+                        self
                             .write_buf
                             .get(..report_size)
                             .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
                     )?),
                     HidI2cReportType::Feature => SetHidReport::Feature(HidReport::new(
                         report_id,
-                        &self
+                        self
                             .write_buf
                             .get(..report_size)
                             .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,

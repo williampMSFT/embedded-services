@@ -63,7 +63,7 @@ impl<MaxSize: ArrayLength> HidReport<MaxSize> {
 
     /// The data for this report. This will be no more than `MaxSize` bytes, but may be less if the report is smaller than the maximum size.
     pub fn data(&self) -> &[u8] {
-        &self.data.as_slice().get(..self.valid_bytes).unwrap_or(&[])
+        self.data.as_slice().get(..self.valid_bytes).unwrap_or(&[])
     }
 }
 
