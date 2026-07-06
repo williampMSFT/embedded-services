@@ -1,5 +1,9 @@
 //! HID relay code
 
+#![allow(clippy::panic)] // TODO remove this once we've fleshed out the HID support library; we can live with panics for bringup
+#![allow(clippy::unreachable)] // TODO remove this once we've fleshed out the HID support library; we can live with panics for bringup
+#![allow(clippy::expect_used)] // TODO remove this once we've fleshed out the HID support library; we can live with panics for bringup
+
 use generic_array::{ArrayLength, GenericArray};
 use num_enum::TryFromPrimitive;
 

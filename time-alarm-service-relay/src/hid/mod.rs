@@ -1,5 +1,6 @@
 // TODO rm before checkin
 #![warn(warnings)]
+#![warn(clippy::todo)]
 
 use embedded_services::relay::hid::*; // TODO avoid wildcard?
 

@@ -447,14 +447,11 @@ impl<
                 device_descriptor::HID_REPORT_ID_SIZE_BYTES
             };
         let [size_low, size_high] = size_bytes.to_le_bytes();
-        let header = [size_low, size_high, report.id().0];
 
-        let header_slice = if self.hid_device.report_descriptor().input_id_is_implicit() {
-            header
-                .get(..2)
-                .expect("We know header is 3 bytes because we just declared it")
+        let header_slice: &[u8] = if self.hid_device.report_descriptor().input_id_is_implicit() {
+            &[size_low, size_high]
         } else {
-            &header
+            &[size_low, size_high, report.id().0]
         };
 
         trace!(
@@ -476,16 +473,17 @@ impl<
     async fn process_output_report_write(&mut self) -> Result<(), Error<Bus::Error>> {
         let mut write_header_buf = [0u8; (device_descriptor::HID_REPORT_HEADER_SIZE_BYTES
             + device_descriptor::HID_REPORT_ID_SIZE_BYTES) as usize];
-        let header_buf_slice = if self.hid_device.report_descriptor().output_id_is_implicit() {
-            // NOTE: If there is no report ID because we only have one report, we call it 0.
-            write_header_buf
-                .get_mut(..2)
-                .expect("We know buffer is 3 bytes because we just declared it")
+
+        // NOTE - if we're using implicit report IDs, we present that to HidDevice implementations as report ID 0.
+        let header_len = if self.hid_device.report_descriptor().output_id_is_implicit() {
+            write_header_buf.len() - (device_descriptor::HID_REPORT_ID_SIZE_BYTES as usize)
         } else {
-            &mut write_header_buf
+            write_header_buf.len()
         };
 
-        let header_len = header_buf_slice.len();
+        let header_buf_slice = write_header_buf
+            .get_mut(..header_len)
+            .ok_or(Error::Protocol(ProtocolError::InvalidSize))?;
 
         self.bus.read(header_buf_slice).await?;
 
@@ -504,8 +502,7 @@ impl<
         let output_report = embedded_services::relay::hid::SetHidReport::Output(
             HidReport::new(
                 embedded_services::relay::hid::ReportId(report_id),
-                self
-                    .write_buf
+                self.write_buf
                     .get(..length)
                     .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
             )
@@ -593,15 +590,13 @@ impl<
                     }
                     HidI2cReportType::Output => SetHidReport::Output(HidReport::new(
                         report_id,
-                        self
-                            .write_buf
+                        self.write_buf
                             .get(..report_size)
                             .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
                     )?),
                     HidI2cReportType::Feature => SetHidReport::Feature(HidReport::new(
                         report_id,
-                        self
-                            .write_buf
+                        self.write_buf
                             .get(..report_size)
                             .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
                     )?),
