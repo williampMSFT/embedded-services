@@ -42,16 +42,6 @@ impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blockin
     type FeatureReportMaxSize = MaxReportSize;
     const MAX_REPORT_COUNT: u8 = 10; // TODO figure out how many reports we actually need to support and set this accordingly
 
-    type ReportReceiver<'a>
-        = embassy_sync::channel::Receiver<
-        'a,
-        M,
-        Result<HidReport<Self::InputReportMaxSize>, HidError>,
-        MAX_PENDING_MESSAGES,
-    >
-    where
-        Self: 'a; // TODO figure out the right size for this buffer
-
     fn report_descriptor(&self) -> &HidReportDescriptor {
         &self.report_descriptor
     }
@@ -71,8 +61,16 @@ impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blockin
         todo!()
     }
 
-    fn receiver(&mut self) -> Self::ReportReceiver<'_> {
-        self.channel.receiver()
+    fn wait_for_input_report(&mut self) -> impl Future<Output = ()> {
+        self.channel.ready_to_receive()
+    }
+
+    fn next_input_report(&mut self) -> impl Future<Output = Result<HidReport<Self::InputReportMaxSize>, HidError>> {
+        self.channel.receive()
+    }
+
+    fn has_pending_input_report(&mut self) -> bool {
+        !self.channel.is_empty()
     }
 
     async fn set_power_state(&mut self, _state: HidDevicePowerState) -> Result<(), HidError> {

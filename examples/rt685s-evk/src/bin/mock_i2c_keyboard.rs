@@ -115,26 +115,6 @@ impl MockKeyboardService {
 }
 
 // TODO if this pattern is going to be common, maybe write a generic struct to do it
-struct KeyboardNotificationHidReceiver<'a> {
-    receiver: embassy_sync::channel::Receiver<'a, embedded_services::GlobalRawMutex, KeyboardInputReport, 5>,
-}
-
-impl<'a, MaxSize: generic_array::ArrayLength> ReportReceiver<MaxSize> for KeyboardNotificationHidReceiver<'a> {
-    async fn ready_to_receive(&self) {
-        self.receiver.ready_to_receive().await
-    }
-
-    async fn receive(&self) -> Result<HidReport<MaxSize>, HidError> {
-        let report = self.receiver.receive().await;
-        let hid_report = HidReport::new(ReportId(REPORTID_KEYBOARD), report.as_bytes()).unwrap();
-        Ok(hid_report)
-    }
-
-    fn is_empty(&self) -> bool {
-        self.receiver.is_empty()
-    }
-}
-
 struct MockKeyboardHidRelay<'s> {
     service: &'s MockKeyboardService,
     descriptor: HidReportDescriptor,
@@ -153,9 +133,6 @@ impl embedded_services::relay::hid::HidDevice for MockKeyboardHidRelay<'_> {
     type InputReportMaxSize = typenum::U8;
     type OutputReportMaxSize = typenum::U1;
     type FeatureReportMaxSize = typenum::U0;
-
-    /// The type that will surface HID reports as they become available.
-    type ReportReceiver<'a> = KeyboardNotificationHidReceiver<'a > where Self: 'a;
 
     const MAX_REPORT_COUNT: u8 = 2;
 
@@ -206,8 +183,18 @@ impl embedded_services::relay::hid::HidDevice for MockKeyboardHidRelay<'_> {
         Ok(())
     }
 
-    fn receiver(&mut self) -> Self::ReportReceiver<'_> {
-        KeyboardNotificationHidReceiver{receiver: self.service.receiver()}
+    async fn wait_for_input_report(&mut self) {
+        self.service.receiver().ready_to_receive().await
+    }
+
+    async fn next_input_report(&mut self) -> Result<HidReport<Self::InputReportMaxSize>, HidError> {
+        let report = self.service.receiver().receive().await;
+        let hid_report = HidReport::new(ReportId(REPORTID_KEYBOARD), report.as_bytes()).unwrap();
+        Ok(hid_report)
+    }
+
+    fn has_pending_input_report(&mut self) -> bool {
+        !self.service.receiver().is_empty()
     }
 
     async fn set_power_state(&mut self, state: HidDevicePowerState) -> Result<(), HidError> {

@@ -119,32 +119,6 @@ impl<InputMaxSize: ArrayLength, FeatureMaxSize: ArrayLength> GetHidReport<InputM
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReportId(pub u8);
 
-/// An object capable of listening for unsolicited reports from a HID device.
-pub trait ReportReceiver<MaxSize: ArrayLength> {
-    /// Blocks until the receiver is ready to yield a report.
-    fn ready_to_receive(&self) -> impl core::future::Future<Output = ()>;
-
-    /// Blocks until a report is available and returns it. If the receiver is empty, this will block until a report is available.
-    fn receive(&self) -> impl core::future::Future<Output = Result<HidReport<MaxSize>, HidError>>;
-
-    /// Returns true if the receiver is empty and there are no reports available to receive.
-    fn is_empty(&self) -> bool;
-}
-
-impl<'ch, M: embassy_sync::blocking_mutex::raw::RawMutex, MaxSize: ArrayLength, const N: usize> ReportReceiver<MaxSize>
-    for embassy_sync::channel::Receiver<'ch, M, Result<HidReport<MaxSize>, HidError>, N>
-{
-    fn ready_to_receive(&self) -> impl Future<Output = ()> {
-        self.ready_to_receive()
-    }
-    fn receive(&self) -> impl Future<Output = Result<HidReport<MaxSize>, HidError>> {
-        self.receive()
-    }
-    fn is_empty(&self) -> bool {
-        self.is_empty()
-    }
-}
-
 /// A single HID device that we want to present to the host.
 /// This is a transport-agnostic trait that abstracts over the details of how we get reports to/from the host,
 /// so that we can implement it once and then use it for both HID-I2C and HID-I3C (and potentially HID-SPI in the
@@ -170,14 +144,6 @@ pub trait HidDevice {
     /// The maximum size of a feature report (bidirectional) that this device can use, expressed in bytes.
     /// This must agree with the descriptor returned by `report_descriptor()`.
     type FeatureReportMaxSize: ArrayLength;
-
-    /// The type that will surface HID reports as they become available.
-    /// In general, default to using `embassy_sync::channel::Receiver<'a, M, Result<HidReport<Self::InputReportMaxSize>, HidError>, N>`
-    /// where `N` is some reasonable upper bound on the number of pending reports unless you have a specific reason to do something
-    /// else.
-    type ReportReceiver<'a>: ReportReceiver<Self::InputReportMaxSize>
-    where
-        Self: 'a;
 
     /// The maximum number of individual reports that the device will have.  In most cases, this should be exactly the number of
     /// reports that the device has, but in the passthrough case where that knowledge isn't available at compile time, this will
@@ -211,7 +177,17 @@ pub trait HidDevice {
     ) -> impl core::future::Future<Output = Result<(), HidError>>;
 
     /// This is for 'unsolicited' reports - user is responsible for polling this and sending it up.
-    fn receiver(&mut self) -> Self::ReportReceiver<'_>;
+    ///
+    /// Blocks until the device is ready to yield an unsolicited report.
+    fn wait_for_input_report(&mut self) -> impl core::future::Future<Output = ()>;
+
+    /// Blocks until an unsolicited report is available and returns it. If none is available, this will block until one is.
+    ///
+    /// This is for 'unsolicited' reports - user is responsible for polling this and sending it up.
+    fn next_input_report(&mut self) -> impl core::future::Future<Output = Result<HidReport<Self::InputReportMaxSize>, HidError>>;
+
+    /// Returns true if there is a pending input report that can be retrieved immediately with next_input_report().
+    fn has_pending_input_report(&mut self) -> bool;
 
     /// Called when the host commands a particular power state.
     fn set_power_state(

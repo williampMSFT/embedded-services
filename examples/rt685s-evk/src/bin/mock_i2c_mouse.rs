@@ -114,26 +114,6 @@ impl MockMouseService {
 }
 
 // TODO if this pattern is going to be common, maybe write a generic struct to do it
-struct MouseNotificationHidReceiver<'a> {
-    receiver: embassy_sync::channel::Receiver<'a, embedded_services::GlobalRawMutex, MouseReport, 3>,
-}
-
-impl<'a, MaxSize: generic_array::ArrayLength> ReportReceiver<MaxSize> for MouseNotificationHidReceiver<'a> {
-    async fn ready_to_receive(&self) {
-        self.receiver.ready_to_receive().await
-    }
-
-    async fn receive(&self) -> Result<HidReport<MaxSize>, HidError> {
-        let report = self.receiver.receive().await;
-        let hid_report = HidReport::new(ReportId(REPORTID_MOUSE), report.as_bytes()).unwrap();
-        Ok(hid_report)
-    }
-
-    fn is_empty(&self) -> bool {
-        self.receiver.is_empty()
-    }
-}
-
 struct MockMouseHidRelay<'s> {
     service: &'s MockMouseService,
     descriptor: HidReportDescriptor,
@@ -152,9 +132,6 @@ impl embedded_services::relay::hid::HidDevice for MockMouseHidRelay<'_> {
     type InputReportMaxSize = typenum::U3;
     type OutputReportMaxSize = typenum::U0;
     type FeatureReportMaxSize = typenum::U0;
-
-    /// The type that will surface HID reports as they become available.
-    type ReportReceiver<'a> = MouseNotificationHidReceiver<'a > where Self: 'a;
 
     const MAX_REPORT_COUNT: u8 = 3;
 
@@ -195,8 +172,18 @@ impl embedded_services::relay::hid::HidDevice for MockMouseHidRelay<'_> {
         Ok(())
     }
 
-    fn receiver(&mut self) -> Self::ReportReceiver<'_> {
-        MouseNotificationHidReceiver{receiver: self.service.receiver()}
+    async fn wait_for_input_report(&mut self) {
+        self.service.receiver().ready_to_receive().await
+    }
+
+    async fn next_input_report(&mut self) -> Result<HidReport<Self::InputReportMaxSize>, HidError> {
+        let report = self.service.receiver().receive().await;
+        let hid_report = HidReport::new(ReportId(REPORTID_MOUSE), report.as_bytes()).unwrap();
+        Ok(hid_report)
+    }
+
+    fn has_pending_input_report(&mut self) -> bool {
+        !self.service.receiver().is_empty()
     }
 
     async fn set_power_state(&mut self, state: HidDevicePowerState) -> Result<(), HidError> {
@@ -204,7 +191,7 @@ impl embedded_services::relay::hid::HidDevice for MockMouseHidRelay<'_> {
         Ok(())
     }
 
-    async fn host_reset(&mut self) {
+    async fn reset(&mut self) {
         info!("Received reset command");
     }
 }

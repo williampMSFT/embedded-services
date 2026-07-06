@@ -5,7 +5,7 @@ use embassy_time::{Duration, with_timeout};
 use embedded_mcu_hal::i2c::target::asynch::I2c as I2cTargetAsync;
 use embedded_mcu_hal::i2c::target::{ReadStatus, Request, WriteStatus};
 use embedded_services::relay::hid;
-use embedded_services::relay::hid::{GetHidReportType, HidError, HidReport, ReportReceiver, SetHidReport};
+use embedded_services::relay::hid::{GetHidReportType, HidError, HidReport, SetHidReport};
 use zerocopy::IntoBytes;
 
 /// HID-I2C Command Opcode as specified in section 7.1.1 of the HID-I2C spec
@@ -239,12 +239,11 @@ impl<
             let event = {
                 // If we've raised the interrupt, we know it won't be dismissed again until it's serviced by the host reading
                 // the input report, so we don't need to listen for another notification.
-                let receiver = self.hid_device.receiver();
                 let input_report_ready_future = async {
                     if self.attn_pin.asserted() {
                         core::future::pending().await
                     } else {
-                        receiver.ready_to_receive().await
+                        self.hid_device.wait_for_input_report().await
                     }
                 };
                 embassy_futures::select::select3(
@@ -406,7 +405,7 @@ impl<
     // Respond to the host with the next input report.
     async fn reply_with_input_report(&mut self) -> Result<(), Error<Bus::Error>> {
         if self.pending_reset {
-            info!("Processing first input report read after reset");
+            info!("HID-I2C: Processing first input report read after reset");
             // We need to acknowledge that we've completed a reset by writing back 0's - see section 7.2.1 of the HID spec
             self.bus.write(&[00, 00]).await?;
 
@@ -415,8 +414,20 @@ impl<
             return Ok(());
         }
 
-        let report = self.hid_device.receiver().receive().await?;
-        info!("Got report to return - listening to bus for read request");
+        // If the host reads the input register when we have no report queued, return an empty report.
+        // In general, this should not happen (the host should only poll us when we've asserted the interrupt,
+        // which we only do when we have a report ready), but if it does due to e.g. a host-side race condition,
+        // we'll stall the I2C bus if we don't respond.
+        //
+        if !self.hid_device.has_pending_input_report() {
+            warn!("HID-I2C: Host polled when no input report was pending; responding with zero-length report");
+            self.bus.write(&[00, 00]).await?;
+            self.attn_pin.clear_interrupt();
+            return Ok(());
+        }
+
+        let report = self.hid_device.next_input_report().await?;
+        info!("HID-I2C: Got report to return - listening to bus for read request");
 
         let size_bytes = report.data().len() as u16
             + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES
@@ -445,7 +456,7 @@ impl<
         self.bus.write_unterminated(header_slice).await?;
         self.bus.write(report.data()).await?;
 
-        if self.hid_device.receiver().is_empty() {
+        if !self.hid_device.has_pending_input_report() {
             self.attn_pin.clear_interrupt();
         }
 
