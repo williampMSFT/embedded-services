@@ -184,9 +184,12 @@ pub trait HidDevice {
     /// Blocks until an unsolicited report is available and returns it. If none is available, this will block until one is.
     ///
     /// This is for 'unsolicited' reports - user is responsible for polling this and sending it up.
-    fn next_input_report(&mut self) -> impl core::future::Future<Output = Result<HidReport<Self::InputReportMaxSize>, HidError>>;
+    fn next_input_report(
+        &mut self,
+    ) -> impl core::future::Future<Output = Result<HidReport<Self::InputReportMaxSize>, HidError>>;
 
     /// Returns true if there is a pending input report that can be retrieved immediately with next_input_report().
+    /// If this returns true, it implies that wait_for_input_report() and next_input_report() should return immediately.
     fn has_pending_input_report(&mut self) -> bool;
 
     /// Called when the host commands a particular power state.

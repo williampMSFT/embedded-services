@@ -124,7 +124,7 @@ impl<Bus: I2cTargetAsync, AttnPin: embedded_hal::digital::OutputPin, HidDevice: 
 struct TimeoutBus<Bus: I2cTargetAsync> {
     bus: Bus,
 
-    timeout_settings: TimeoutSettings
+    timeout_settings: TimeoutSettings,
 }
 
 impl<Bus: I2cTargetAsync> TimeoutBus<Bus> {
@@ -151,7 +151,12 @@ impl<Bus: I2cTargetAsync> TimeoutBus<Bus> {
 
     /// Read bytes the host is writing to us, applying the data-read timeout and recovering the bus on failure.
     async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Error<Bus::Error>> {
-        match with_timeout(self.timeout_settings.data_read_timeout, self.bus.respond_to_write(buffer)).await {
+        match with_timeout(
+            self.timeout_settings.data_read_timeout,
+            self.bus.respond_to_write(buffer),
+        )
+        .await
+        {
             // Timed out waiting for the controller to drive the transfer.
             Err(_timeout_error) => {
                 error!("Read request timeout");
@@ -191,7 +196,12 @@ impl<Bus: I2cTargetAsync> TimeoutBus<Bus> {
 
     /// Write `buffer` to the host; returns true if the host requested more bytes than we provided.
     async fn write_unterminated(&mut self, buffer: &[u8]) -> Result<bool, Error<Bus::Error>> {
-        match with_timeout(self.timeout_settings.device_response_timeout, self.bus.respond_to_read(buffer)).await {
+        match with_timeout(
+            self.timeout_settings.device_response_timeout,
+            self.bus.respond_to_read(buffer),
+        )
+        .await
+        {
             Err(_timeout_error) => {
                 error!("Write request timeout");
                 self.bus.recover().await.map_err(|e| Error::Bus(e))?;
@@ -650,10 +660,7 @@ impl<
                 _phantom: PhantomData,
             },
             Runner {
-                bus: TimeoutBus {
-                    bus,
-                    timeout_settings
-                },
+                bus: TimeoutBus { bus, timeout_settings },
                 attn_pin: AttnPinHandler::new(attn_pin),
                 hid_device,
                 device_descriptor,
