@@ -8,10 +8,10 @@ use embassy_executor::Spawner;
 use embassy_imxrt::i2c::slave::{Address, I2cSlave};
 use embassy_imxrt::i2c::{self, Async};
 use embassy_imxrt::{bind_interrupts, peripherals};
-use static_cell::StaticCell;
-use panic_probe as _;
-use zerocopy::{IntoBytes, FromBytes};
 use embedded_services::relay::hid::*;
+use panic_probe as _;
+use static_cell::StaticCell;
+use zerocopy::{FromBytes, IntoBytes};
 
 use embedded_services::warn;
 
@@ -20,39 +20,39 @@ const SLAVE_ADDR: Option<Address> = Address::new(0x15);
 // This is adapted from the example keyboard HID descriptor packaged with the DT.exe tool / https://learn.microsoft.com/en-us/windows-hardware/design/component-guidelines/keyboard-collection-report-descriptor
 const REPORTID_KEYBOARD: u8 = 0; // If we don't specify a report ID in our descriptor, the transport service will use report ID 0, which is normally not a valid report ID.
 const KEYBOARD_HID_REPORT_DESCRIPTOR: &[u8] = &[
-    0x05, 0x01,                    // USAGE_PAGE (Generic Desktop)
-    0x09, 0x06,                    // USAGE (Keyboard)
-    0xa1, 0x01,                    // COLLECTION (Application)
+    0x05, 0x01, // USAGE_PAGE (Generic Desktop)
+    0x09, 0x06, // USAGE (Keyboard)
+    0xa1, 0x01, // COLLECTION (Application)
     // 0x85, REPORTID_KEYBOARD,            //   REPORT_ID (keyboard) // Enable this if we need to support more than one report of any type; if you do, set REPORTID_KEYBOARD to be nonzero.
-    0x05, 0x07,                    //   USAGE_PAGE (Keyboard)
-    0x19, 0xe0,                    //   USAGE_MINIMUM (Keyboard LeftControl)
-    0x29, 0xe7,                    //   USAGE_MAXIMUM (Keyboard Right GUI)
-    0x15, 0x00,                    //   LOGICAL_MINIMUM (0)
-    0x25, 0x01,                    //   LOGICAL_MAXIMUM (1)
-    0x75, 0x01,                    //   REPORT_SIZE (1)
-    0x95, 0x08,                    //   REPORT_COUNT (8)
-    0x81, 0x02,                    //   INPUT (Data,Var,Abs)
-    0x95, 0x01,                    //   REPORT_COUNT (1)
-    0x75, 0x08,                    //   REPORT_SIZE (8)
-    0x81, 0x03,                    //   INPUT (Cnst,Var,Abs)
-    0x95, 0x05,                    //   REPORT_COUNT (5)
-    0x75, 0x01,                    //   REPORT_SIZE (1)
-    0x05, 0x08,                    //   USAGE_PAGE (LEDs)
-    0x19, 0x01,                    //   USAGE_MINIMUM (Num Lock)
-    0x29, 0x05,                    //   USAGE_MAXIMUM (Kana)
-    0x91, 0x02,                    //   OUTPUT (Data,Var,Abs)
-    0x95, 0x01,                    //   REPORT_COUNT (1)
-    0x75, 0x03,                    //   REPORT_SIZE (3)
-    0x91, 0x03,                    //   OUTPUT (Cnst,Var,Abs)
-    0x95, 0x06,                    //   REPORT_COUNT (6)
-    0x75, 0x08,                    //   REPORT_SIZE (8)
-    0x15, 0x00,                    //   LOGICAL_MINIMUM (0)
-    0x25, 0x65,                    //   LOGICAL_MAXIMUM (101)
-    0x05, 0x07,                    //   USAGE_PAGE (Keyboard)
-    0x19, 0x00,                    //   USAGE_MINIMUM (Reserved (no event indicated))
-    0x29, 0x65,                    //   USAGE_MAXIMUM (Keyboard Application)
-    0x81, 0x00,                    //   INPUT (Data,Ary,Abs)
-    0xc0                           // END_COLLECTION
+    0x05, 0x07, //   USAGE_PAGE (Keyboard)
+    0x19, 0xe0, //   USAGE_MINIMUM (Keyboard LeftControl)
+    0x29, 0xe7, //   USAGE_MAXIMUM (Keyboard Right GUI)
+    0x15, 0x00, //   LOGICAL_MINIMUM (0)
+    0x25, 0x01, //   LOGICAL_MAXIMUM (1)
+    0x75, 0x01, //   REPORT_SIZE (1)
+    0x95, 0x08, //   REPORT_COUNT (8)
+    0x81, 0x02, //   INPUT (Data,Var,Abs)
+    0x95, 0x01, //   REPORT_COUNT (1)
+    0x75, 0x08, //   REPORT_SIZE (8)
+    0x81, 0x03, //   INPUT (Cnst,Var,Abs)
+    0x95, 0x05, //   REPORT_COUNT (5)
+    0x75, 0x01, //   REPORT_SIZE (1)
+    0x05, 0x08, //   USAGE_PAGE (LEDs)
+    0x19, 0x01, //   USAGE_MINIMUM (Num Lock)
+    0x29, 0x05, //   USAGE_MAXIMUM (Kana)
+    0x91, 0x02, //   OUTPUT (Data,Var,Abs)
+    0x95, 0x01, //   REPORT_COUNT (1)
+    0x75, 0x03, //   REPORT_SIZE (3)
+    0x91, 0x03, //   OUTPUT (Cnst,Var,Abs)
+    0x95, 0x06, //   REPORT_COUNT (6)
+    0x75, 0x08, //   REPORT_SIZE (8)
+    0x15, 0x00, //   LOGICAL_MINIMUM (0)
+    0x25, 0x65, //   LOGICAL_MAXIMUM (101)
+    0x05, 0x07, //   USAGE_PAGE (Keyboard)
+    0x19, 0x00, //   USAGE_MINIMUM (Reserved (no event indicated))
+    0x29, 0x65, //   USAGE_MAXIMUM (Keyboard Application)
+    0x81, 0x00, //   INPUT (Data,Ary,Abs)
+    0xc0, // END_COLLECTION
 ];
 
 #[repr(C, packed)]
@@ -109,12 +109,13 @@ impl MockKeyboardService {
         }
     }
 
-    pub fn receiver(&self) -> embassy_sync::channel::Receiver<'_, embedded_services::GlobalRawMutex, KeyboardInputReport, 5> {
+    pub fn receiver(
+        &self,
+    ) -> embassy_sync::channel::Receiver<'_, embedded_services::GlobalRawMutex, KeyboardInputReport, 5> {
         self.channel.receiver()
     }
 }
 
-// TODO if this pattern is going to be common, maybe write a generic struct to do it
 struct MockKeyboardHidRelay<'s> {
     service: &'s MockKeyboardService,
     descriptor: HidReportDescriptor,
@@ -140,19 +141,17 @@ impl embedded_services::relay::hid::HidDevice for MockKeyboardHidRelay<'_> {
         &self.descriptor
     }
 
-    async fn get_report(
+    async fn process_get_report<R>(
         &mut self,
         _report_type: GetHidReportType,
         report_id: ReportId,
-    ) -> Result<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>, HidError> {
+        process_report: impl AsyncFnOnce(GetHidReport<'_>) -> R,
+    ) -> Result<R, HidError> {
         info!("Received command to get report with ID {:?}", report_id);
         match report_id {
             ReportId(REPORTID_KEYBOARD) => {
                 let report = KeyboardInputReport::default();
-                Ok(GetHidReport::Input(HidReport::<Self::InputReportMaxSize>::new(
-                    report_id,
-                    report.as_bytes()
-                ).unwrap()))
+                Ok(process_report(GetHidReport::Input(HidReport::new(report_id, report.as_bytes()))).await)
             }
             _ => {
                 info!("Report ID {:?} not recognized", report_id);
@@ -161,21 +160,16 @@ impl embedded_services::relay::hid::HidDevice for MockKeyboardHidRelay<'_> {
         }
     }
 
-    async fn set_report(
-        &mut self,
-        report: &SetHidReport<Self::OutputReportMaxSize, Self::FeatureReportMaxSize>,
-    ) -> Result<(), HidError> {
+    async fn set_report(&mut self, report: &SetHidReport<'_>) -> Result<(), HidError> {
         match report {
-            SetHidReport::Output(r) => {
-                match r.id() {
-                    ReportId(REPORTID_KEYBOARD) => {
-                        let output_report = KeyboardOutputReport::read_from_bytes(r.data()).unwrap();
-                        info!("Received keyboard output report: {:?}", output_report);
-                    }
-                    _ => {
-                        info!("Report ID {:?} not recognized", r.id());
-                        return Err(HidError::TriggerReset);
-                    }
+            SetHidReport::Output(r) => match r.id() {
+                ReportId(REPORTID_KEYBOARD) => {
+                    let output_report = KeyboardOutputReport::read_from_bytes(r.data()).unwrap();
+                    info!("Received keyboard output report: {:?}", output_report);
+                }
+                _ => {
+                    info!("Report ID {:?} not recognized", r.id());
+                    return Err(HidError::TriggerReset);
                 }
             },
             SetHidReport::Feature(r) => info!("Received command to set feature report with ID {:?}", r.id()),
@@ -187,10 +181,18 @@ impl embedded_services::relay::hid::HidDevice for MockKeyboardHidRelay<'_> {
         self.service.receiver().ready_to_receive().await
     }
 
-    async fn next_input_report(&mut self) -> Result<HidReport<Self::InputReportMaxSize>, HidError> {
-        let report = self.service.receiver().receive().await;
-        let hid_report = HidReport::new(ReportId(REPORTID_KEYBOARD), report.as_bytes()).unwrap();
-        Ok(hid_report)
+    async fn process_next_input_report<R>(
+        &mut self,
+        process_report: impl AsyncFnOnce(HidReport<'_>) -> R,
+    ) -> Result<R, HidError> {
+        // This mock copies each report into `input_report` so the borrow handed to `process_report` outlives
+        // the channel receive. (The mouse mock shows the zero-copy alternative.)
+        let input_report = self.service.receiver().receive().await;
+        Ok(process_report(HidReport::new(
+            ReportId(REPORTID_KEYBOARD),
+            input_report.as_bytes(),
+        ))
+        .await)
     }
 
     fn has_pending_input_report(&mut self) -> bool {
@@ -207,7 +209,6 @@ impl embedded_services::relay::hid::HidDevice for MockKeyboardHidRelay<'_> {
         self.service.receiver().clear();
     }
 }
-
 
 bind_interrupts!(struct Irqs {
     FLEXCOMM2 => i2c::InterruptHandler<peripherals::FLEXCOMM2>;
@@ -261,7 +262,12 @@ async fn main(spawner: Spawner) {
 
     let mut hidsvc = odp_service_common::spawn_service!(
         spawner,
-        hidi2c_target_service::Service<'static, I2cSlave<'static, Async>, gpio::Output<'static>, MockKeyboardHidRelay<'static>>,
+        hidi2c_target_service::Service<
+            'static,
+            I2cSlave<'static, Async>,
+            gpio::Output<'static>,
+            MockKeyboardHidRelay<'static>,
+        >,
         |resources| hidi2c_target_service::Service::new(
             resources,
             i2c,
@@ -269,12 +275,13 @@ async fn main(spawner: Spawner) {
             MockKeyboardHidRelay::new(keyboard_service),
             hidi2c_target_service::HardwareVersionInfo {
                 vendor_id: hidi2c_target_service::VendorId::new(0x1234).unwrap(), // TODO pick a real vendor ID
-                product_id: hidi2c_target_service::ProductId(0x5678), // TODO pick a real product ID
-                version_id: hidi2c_target_service::VersionId(0x0001), // TODO pick a real version number
+                product_id: hidi2c_target_service::ProductId(0x5678),             // TODO pick a real product ID
+                version_id: hidi2c_target_service::VersionId(0x0001),             // TODO pick a real version number
             },
             hidi2c_target_service::TimeoutSettings::default()
         )
-    ).expect("Failed to spawn HID service");
+    )
+    .expect("Failed to spawn HID service");
 
     info!("Waiting 10s before starting to send inputs");
     embassy_time::Timer::after(embassy_time::Duration::from_secs(10)).await;
@@ -291,6 +298,3 @@ async fn main(spawner: Spawner) {
         }
     }
 }
-
-
-

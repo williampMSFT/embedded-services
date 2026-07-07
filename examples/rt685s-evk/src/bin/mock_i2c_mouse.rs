@@ -8,52 +8,54 @@ use embassy_executor::Spawner;
 use embassy_imxrt::i2c::slave::{Address, I2cSlave};
 use embassy_imxrt::i2c::{self, Async};
 use embassy_imxrt::{bind_interrupts, peripherals};
-use static_cell::StaticCell;
-use panic_probe as _;
-use zerocopy::IntoBytes;
+use embassy_sync::zerocopy_channel;
+use embedded_services::GlobalRawMutex;
 use embedded_services::relay::hid::*;
-
-use embedded_services::warn;
+use panic_probe as _;
+use static_cell::StaticCell;
+use zerocopy::IntoBytes;
 
 const SLAVE_ADDR: Option<Address> = Address::new(0x15);
 
 // This is adapted from the example mouse HID descriptor packaged with the DT.exe tool / https://learn.microsoft.com/en-us/windows-hardware/design/component-guidelines/mouse-collection-report-descriptor
 const REPORTID_MOUSE: u8 = 1;
+
+#[rustfmt::skip]
 const MOUSE_HID_REPORT_DESCRIPTOR: &[u8] = &[
-    0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
-    0x09, 0x02,        // Usage (Mouse)
-    0xA1, 0x01,        // Collection (Application)
-    0x85, REPORTID_MOUSE,            //   REPORT_ID (Touch pad) **** THIS IS ADAPTED FROM SAMPLE TOUCHPAD DESCRIPTOR, THE MOUSE EXAMPLE OMITTED IT BECAUSSE IT ONLY HAD 1 REPORT
-    0x09, 0x01,        //   Usage (Pointer)
-    0xA1, 0x00,        //   Collection (Physical)
-    0x05, 0x09,        //     Usage Page (Button)
-    0x19, 0x01,        //     Usage Minimum (0x01)
-    0x29, 0x03,        //     Usage Maximum (0x03)
-    0x15, 0x00,        //     Logical Minimum (0)
-    0x25, 0x01,        //     Logical Maximum (1)
-    0x95, 0x03,        //     Report Count (3)
-    0x75, 0x01,        //     Report Size (1)
-    0x81, 0x02,        //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x95, 0x01,        //     Report Count (1)
-    0x75, 0x05,        //     Report Size (5)
-    0x81, 0x03,        //     Input (Const,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-    0x05, 0x01,        //     Usage Page (Generic Desktop Ctrls)
-    0x09, 0x30,        //     Usage (X)
-    0x09, 0x31,        //     Usage (Y)
-    0x15, 0x81,        //     Logical Minimum (-127)
-    0x25, 0x7F,        //     Logical Maximum (127)
-    0x75, 0x08,        //     Report Size (8)
-    0x95, 0x02,        //     Report Count (2)
-    0x81, 0x06,        //     Input (Data,Var,Rel,No Wrap,Linear,Preferred State,No Null Position)
-    0xC0,              //   End Collection
-    0xC0,              // End Collection
+    0x05, 0x01, // Usage Page (Generic Desktop Ctrls)
+    0x09, 0x02, // Usage (Mouse)
+    0xA1, 0x01, // Collection (Application)
+    0x85, REPORTID_MOUSE, //   REPORT_ID (Touch pad) **** THIS IS ADAPTED FROM SAMPLE TOUCHPAD DESCRIPTOR, THE MOUSE EXAMPLE OMITTED IT BECAUSSE IT ONLY HAD 1 REPORT
+    0x09, 0x01, //   Usage (Pointer)
+    0xA1, 0x00, //   Collection (Physical)
+    0x05, 0x09, //     Usage Page (Button)
+    0x19, 0x01, //     Usage Minimum (0x01)
+    0x29, 0x03, //     Usage Maximum (0x03)
+    0x15, 0x00, //     Logical Minimum (0)
+    0x25, 0x01, //     Logical Maximum (1)
+    0x95, 0x03, //     Report Count (3)
+    0x75, 0x01, //     Report Size (1)
+    0x81, 0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x95, 0x01, //     Report Count (1)
+    0x75, 0x05, //     Report Size (5)
+    0x81, 0x03, //     Input (Const,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x05, 0x01, //     Usage Page (Generic Desktop Ctrls)
+    0x09, 0x30, //     Usage (X)
+    0x09, 0x31, //     Usage (Y)
+    0x15, 0x81, //     Logical Minimum (-127)
+    0x25, 0x7F, //     Logical Maximum (127)
+    0x75, 0x08, //     Report Size (8)
+    0x95, 0x02, //     Report Count (2)
+    0x81, 0x06, //     Input (Data,Var,Rel,No Wrap,Linear,Preferred State,No Null Position)
+    0xC0, //   End Collection
+    0xC0, // End Collection
 ];
 
 const MOUSE_BUTTON_1: u8 = 0x01;
 #[allow(dead_code)]
 const MOUSE_BUTTON_2: u8 = 0x02;
 #[allow(dead_code)]
-const MOUSE_BUTTON_3: u8 = 0x04; 
+const MOUSE_BUTTON_3: u8 = 0x04;
 
 #[repr(C)]
 #[derive(Debug, Default, defmt::Format, zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::Immutable)]
@@ -63,72 +65,76 @@ struct MouseReport {
     y: i8,
 }
 
-struct MockMouseService {
-    // Signal a click
-    channel: embassy_sync::channel::Channel<embedded_services::GlobalRawMutex, MouseReport, 3>,
+// Number of in-flight input reports the zero-copy channel can hold. Depth >= 2 lets the producer
+// stage the next report while the consumer is still handing the current one to the host.
+const MOUSE_CHANNEL_DEPTH: usize = 4;
+
+// Zero-copy channel aliases. Unlike `embassy_sync::channel::Channel`, the payload lives in a
+// caller-provided ring buffer and is written/read *in place* via `&mut MouseReport`, so a large
+// report is never memcpy'd between the producer, the channel, and the I2C write path.
+type MouseChannel = zerocopy_channel::Channel<'static, GlobalRawMutex, MouseReport>;
+type MouseSender = zerocopy_channel::Sender<'static, GlobalRawMutex, MouseReport>;
+type MouseReceiver = zerocopy_channel::Receiver<'static, GlobalRawMutex, MouseReport>;
+
+/// Producer side of the mock. Owns the channel `Sender` and fills report slots in place.
+struct MockMouseProducer {
+    sender: MouseSender,
 }
 
-impl MockMouseService {
-    pub async fn send_click(&self) {
+impl MockMouseProducer {
+    /// Acquire the next free slot in the ring buffer and populate it in place, then publish it.
+    async fn send(&mut self, report: MouseReport) {
+        // `send()` waits for a free slot and yields `&mut MouseReport` pointing straight into the
+        // channel's ring buffer. Writing through it avoids copying the payload into the channel.
+        let slot = self.sender.send().await;
+        *slot = report;
+        // Publish the slot to the consumer. Nothing is copied here either.
+        self.sender.send_done();
+    }
+
+    pub async fn send_click(&mut self) {
         // Mouse down
-        let send_result = self.channel.try_send(MouseReport {
+        self.send(MouseReport {
             buttons: MOUSE_BUTTON_1,
             x: 0,
             y: 0,
-        });
-
-        if let Err(e) = send_result {
-            warn!("Failed to send mouse down report: {:?}", e);
-        }
+        })
+        .await;
 
         embassy_time::Timer::after(embassy_time::Duration::from_millis(15)).await;
 
         // Mouse up
-        let send_result = self.channel.try_send(MouseReport {
-            buttons: 0,
-            x: 0,
-            y: 0,
-        });
-
-        if let Err(e) = send_result {
-            warn!("Failed to send mouse up report: {:?}", e);
-        }
+        self.send(MouseReport { buttons: 0, x: 0, y: 0 }).await;
     }
 
     #[allow(dead_code)]
-    pub fn move_mouse(&self) {
-        let send_result = self.channel.try_send(MouseReport {
+    pub async fn move_mouse(&mut self) {
+        self.send(MouseReport {
             buttons: MOUSE_BUTTON_1,
             x: 10,
             y: 10,
-        });
-
-        if let Err(e) = send_result {
-            warn!("Failed to send mouse move report: {:?}", e);
-        }
-    }
-
-    pub fn receiver(&self) -> embassy_sync::channel::Receiver<'_, embedded_services::GlobalRawMutex, MouseReport, 3> {
-        self.channel.receiver()
+        })
+        .await;
     }
 }
 
-// TODO if this pattern is going to be common, maybe write a generic struct to do it
-struct MockMouseHidRelay<'s> {
-    service: &'s MockMouseService,
+/// Consumer/relay side of the mock. Owns the channel `Receiver` and hands the host borrows that
+/// point directly into the ring buffer — no intermediate copy of the report payload.
+struct MockMouseHidRelay {
+    receiver: MouseReceiver,
     descriptor: HidReportDescriptor,
 }
 
-impl<'s> MockMouseHidRelay<'s> {
-    pub fn new(service: &'s MockMouseService) -> Self {
+impl MockMouseHidRelay {
+    pub fn new(receiver: MouseReceiver) -> Self {
         Self {
-            service,
+            receiver,
             descriptor: HidReportDescriptor::new_static(MOUSE_HID_REPORT_DESCRIPTOR),
         }
     }
 }
 
-impl embedded_services::relay::hid::HidDevice for MockMouseHidRelay<'_> {
+impl embedded_services::relay::hid::HidDevice for MockMouseHidRelay {
     type InputReportMaxSize = typenum::U3;
     type OutputReportMaxSize = typenum::U0;
     type FeatureReportMaxSize = typenum::U0;
@@ -139,19 +145,19 @@ impl embedded_services::relay::hid::HidDevice for MockMouseHidRelay<'_> {
         &self.descriptor
     }
 
-    async fn get_report(
+    async fn process_get_report<R>(
         &mut self,
         _report_type: GetHidReportType,
         report_id: ReportId,
-    ) -> Result<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>, HidError> {
+        process_report: impl AsyncFnOnce(GetHidReport<'_>) -> R,
+    ) -> Result<R, HidError> {
         info!("Received command to get report with ID {:?}", report_id);
         match report_id {
             ReportId(REPORTID_MOUSE) => {
+                // The report only needs to live for the duration of `process_report`, so we can build
+                // it on the stack instead of keeping a field around to back the borrow.
                 let report = MouseReport::default();
-                Ok(GetHidReport::Input(HidReport::<Self::InputReportMaxSize>::new(
-                    report_id,
-                    report.as_bytes()
-                ).unwrap()))
+                Ok(process_report(GetHidReport::Input(HidReport::new(report_id, report.as_bytes()))).await)
             }
             _ => {
                 info!("Report ID {:?} not recognized", report_id);
@@ -160,30 +166,38 @@ impl embedded_services::relay::hid::HidDevice for MockMouseHidRelay<'_> {
         }
     }
 
-    async fn set_report(
-        &mut self,
-        report: &SetHidReport<Self::OutputReportMaxSize, Self::FeatureReportMaxSize>,
-    ) -> Result<(), HidError> {
+    async fn set_report(&mut self, report: &SetHidReport<'_>) -> Result<(), HidError> {
         match report {
             SetHidReport::Output(r) => info!("Received command to set output report with ID {:?}", r.id()),
             SetHidReport::Feature(r) => info!("Received command to set feature report with ID {:?}", r.id()),
         }
-        info!("SET_REPORT NOT IMPLEMENTED"); // TODO implement this if we need it
+        info!("SET_REPORT NOT IMPLEMENTED");
         Ok(())
     }
 
     async fn wait_for_input_report(&mut self) {
-        self.service.receiver().ready_to_receive().await
+        // `receive()` only peeks at the front slot - it doesn't treat the sample as consumed until `receive_done()` is called.
+        // Therefore, we can do this to wait until a report is ready, and then immediately drop it without losing the report.
+        let _ = self.receiver.receive().await;
     }
 
-    async fn next_input_report(&mut self) -> Result<HidReport<Self::InputReportMaxSize>, HidError> {
-        let report = self.service.receiver().receive().await;
-        let hid_report = HidReport::new(ReportId(REPORTID_MOUSE), report.as_bytes()).unwrap();
-        Ok(hid_report)
+    async fn process_next_input_report<R>(
+        &mut self,
+        process_report: impl AsyncFnOnce(HidReport<'_>) -> R,
+    ) -> Result<R, HidError> {
+        // Borrow the next report out of the channel and lend it to the transport for the duration of `process_report`.
+        // This is probably unnecessary for mice because of how small the reports are, but it demonstrates the technique.
+        // For a mouse it may make more sense to use a traditional Channel and just copy the 3 bytes around.
+        let slot = self.receiver.receive().await;
+        let result = process_report(HidReport::new(ReportId(REPORTID_MOUSE), slot.as_bytes())).await;
+
+        // The transport is done with the borrow, so return the slot to the producer.  This is required by zerocopy_channel.
+        self.receiver.receive_done();
+        Ok(result)
     }
 
     fn has_pending_input_report(&mut self) -> bool {
-        !self.service.receiver().is_empty()
+        !self.receiver.is_empty()
     }
 
     async fn set_power_state(&mut self, state: HidDevicePowerState) -> Result<(), HidError> {
@@ -193,9 +207,9 @@ impl embedded_services::relay::hid::HidDevice for MockMouseHidRelay<'_> {
 
     async fn reset(&mut self) {
         info!("Received reset command");
+        self.receiver.clear();
     }
 }
-
 
 bind_interrupts!(struct Irqs {
     FLEXCOMM2 => i2c::InterruptHandler<peripherals::FLEXCOMM2>;
@@ -218,10 +232,13 @@ async fn main(spawner: Spawner) {
         gpio::SlewRate::Standard,
     );
 
-    static MOUSE_SERVICE: StaticCell<MockMouseService> = StaticCell::new();
-    let mouse_service = MOUSE_SERVICE.init(MockMouseService {
-        channel: embassy_sync::channel::Channel::new(),
-    });
+    static MOUSE_BUF: StaticCell<[MouseReport; MOUSE_CHANNEL_DEPTH]> = StaticCell::new();
+    static MOUSE_CHANNEL: StaticCell<MouseChannel> = StaticCell::new();
+    let mouse_buf = MOUSE_BUF.init(core::array::from_fn(|_| MouseReport::default()));
+    let mouse_channel = MOUSE_CHANNEL.init(MouseChannel::new(mouse_buf));
+    // Split the channel into a producer (kept here in `main`) and a consumer (moved into the relay).
+    let (sender, receiver) = mouse_channel.split();
+    let mut producer = MockMouseProducer { sender };
 
     // NOTE: here's where the "aggregate HID devices" macro is currently missing.  Compare with time_alarm.rs where we do this:
     //
@@ -249,27 +266,28 @@ async fn main(spawner: Spawner) {
 
     let _hidsvc = odp_service_common::spawn_service!(
         spawner,
-        hidi2c_target_service::Service<'static, I2cSlave<'static, Async>, gpio::Output<'static>, MockMouseHidRelay<'static>>,
+        hidi2c_target_service::Service<'static, I2cSlave<'static, Async>, gpio::Output<'static>, MockMouseHidRelay>,
         |resources| hidi2c_target_service::Service::new(
             resources,
             i2c,
             attn_pin,
-            MockMouseHidRelay::new(mouse_service),
+            MockMouseHidRelay::new(receiver),
             hidi2c_target_service::HardwareVersionInfo {
                 vendor_id: hidi2c_target_service::VendorId::new(0x1234).unwrap(), // TODO pick a real vendor ID
-                product_id: hidi2c_target_service::ProductId(0x5678), // TODO pick a real product ID
-                version_id: hidi2c_target_service::VersionId(0x0001), // TODO pick a real version number
+                product_id: hidi2c_target_service::ProductId(0x5678),             // TODO pick a real product ID
+                version_id: hidi2c_target_service::VersionId(0x0001),             // TODO pick a real version number
             },
             hidi2c_target_service::TimeoutSettings::default()
         )
-    ).expect("Failed to spawn HID service");
+    )
+    .expect("Failed to spawn HID service");
 
     info!("Waiting 10s before starting to send inputs");
     embassy_time::Timer::after(embassy_time::Duration::from_secs(10)).await;
 
     loop {
         info!("clicking mouse");
-        mouse_service.send_click().await;
+        producer.send_click().await;
         embassy_time::Timer::after(embassy_time::Duration::from_millis(2000)).await;
     }
 }

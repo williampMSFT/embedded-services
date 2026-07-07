@@ -1,6 +1,5 @@
 #![no_std]
 #![no_main]
-
 #![warn(warnings)] // TODO remove before checkin
 
 use embedded_mcu_hal::{
@@ -23,7 +22,7 @@ type TimeAlarmServiceRelayHandlerType = time_alarm_service_relay::TimeAlarmServi
 // STUB HAL TYPES TO MAKE EXAMPLE COMPILE - THESE NEED TO BE IMPLEMENTED IN EMBASSY-IMXRT HAL
 //
 struct StubI2cTarget;
-impl embedded_mcu_hal::i2c::target::ErrorType  for StubI2cTarget {
+impl embedded_mcu_hal::i2c::target::ErrorType for StubI2cTarget {
     type Error = core::convert::Infallible;
 }
 impl embedded_mcu_hal::i2c::target::asynch::I2c for StubI2cTarget {
@@ -31,11 +30,17 @@ impl embedded_mcu_hal::i2c::target::asynch::I2c for StubI2cTarget {
         todo!()
     }
 
-    async fn respond_to_read(&mut self, _data: &[u8]) -> Result<embedded_mcu_hal::i2c::target::ReadStatus, Self::Error> {
+    async fn respond_to_read(
+        &mut self,
+        _data: &[u8],
+    ) -> Result<embedded_mcu_hal::i2c::target::ReadStatus, Self::Error> {
         todo!()
     }
 
-    async fn respond_to_write(&mut self, _data: &mut [u8]) -> Result<embedded_mcu_hal::i2c::target::WriteStatus, Self::Error> {
+    async fn respond_to_write(
+        &mut self,
+        _data: &mut [u8],
+    ) -> Result<embedded_mcu_hal::i2c::target::WriteStatus, Self::Error> {
         todo!()
     }
 
@@ -57,7 +62,6 @@ impl embedded_hal::digital::OutputPin for StubOutputPin {
     }
 }
 
-
 // END STUB HAL TYPES
 
 #[embassy_executor::main]
@@ -73,22 +77,20 @@ async fn main(spawner: embassy_executor::Spawner) {
     embedded_services::init().await;
     info!("services initialized");
 
-    let time_service = odp_service_common::spawn_service!(
-        spawner,
-        TimeAlarmServiceType,
-        |resources| TimeAlarmServiceType::new(resources, 
+    let time_service =
+        odp_service_common::spawn_service!(spawner, TimeAlarmServiceType, |resources| TimeAlarmServiceType::new(
+            resources,
             dt_clock,
             tz,
             ac_expiration,
             ac_policy,
             dc_expiration,
             dc_policy
-        )
-    )
-    .expect("Failed to spawn time alarm service");
+        ))
+        .expect("Failed to spawn time alarm service");
 
-    use time_alarm_service_relay::hid::{TimeAlarmHidRelay};
     use hidi2c_target_service::*;
+    use time_alarm_service_relay::hid::TimeAlarmHidRelay;
 
     let hid_tad_handler = time_alarm_service_relay::hid::TimeAlarmHidRelay::new(time_service);
 
@@ -118,18 +120,25 @@ async fn main(spawner: embassy_executor::Spawner) {
 
     let hidi2csvc = odp_service_common::spawn_service!(
         spawner,
-        hidi2c_target_service::Service<'static, StubI2cTarget, StubOutputPin, TimeAlarmHidRelay<TimeAlarmServiceType, embassy_sync::blocking_mutex::raw::NoopRawMutex>>,
-        |resources| hidi2c_target_service::Service::new(resources, 
+        hidi2c_target_service::Service<
+            'static,
+            StubI2cTarget,
+            StubOutputPin,
+            TimeAlarmHidRelay<TimeAlarmServiceType, embassy_sync::blocking_mutex::raw::NoopRawMutex>,
+        >,
+        |resources| hidi2c_target_service::Service::new(
+            resources,
             hidi2c_target_service::InitParams {
-                bus: StubI2cTarget{},
-                attn_pin: StubOutputPin{},
+                bus: StubI2cTarget {},
+                attn_pin: StubOutputPin {},
                 hid_device: hid_tad_handler,
-                vendor_id: VendorId(0x1234), // TODO pick a real vendor ID
+                vendor_id: VendorId(0x1234),   // TODO pick a real vendor ID
                 product_id: ProductId(0x5678), // TODO pick a real product ID
                 version_id: VersionId(0x0001), // TODO pick a real version number
                 device_response_timeout: embassy_time::Duration::from_secs(1), // TODO figure out what a reasonable timeout is here
                 data_read_timeout: embassy_time::Duration::from_secs(1), // TODO figure out what a reasonable timeout is here
-            })
+            }
+        )
     );
 
     loop {

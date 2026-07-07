@@ -4,7 +4,7 @@
 #![allow(clippy::unreachable)] // TODO remove this once we've fleshed out the HID support library; we can live with panics for bringup
 #![allow(clippy::expect_used)] // TODO remove this once we've fleshed out the HID support library; we can live with panics for bringup
 
-use generic_array::{ArrayLength, GenericArray};
+use generic_array::{ArrayLength};
 use num_enum::TryFromPrimitive;
 
 // TODO read over comments and make sure they're still true when we go to check in
@@ -36,28 +36,16 @@ pub enum HidDevicePowerState {
 }
 
 /// A HID report of no more than X bytes
-pub struct HidReport<MaxSize: ArrayLength> {
+pub struct HidReport<'buf> {
     id: ReportId,
 
-    data: GenericArray<u8, MaxSize>,
-    valid_bytes: usize,
+    data: &'buf [u8],
 }
 
-impl<MaxSize: ArrayLength> HidReport<MaxSize> {
+impl<'buf> HidReport<'buf> {
     /// Create a new HID report from the provided data slice.
-    pub fn new(id: ReportId, data: &[u8]) -> Result<Self, generic_array::LengthError> {
-        Ok(Self {
-            id,
-            data: {
-                let mut result = GenericArray::default();
-                result
-                    .get_mut(..data.len())
-                    .ok_or(generic_array::LengthError)?
-                    .copy_from_slice(data);
-                result
-            },
-            valid_bytes: data.len(),
-        })
+    pub fn new(id: ReportId, data: &'buf [u8]) -> Self {
+        Self { id, data }
     }
 
     /// The report ID for this report
@@ -65,22 +53,22 @@ impl<MaxSize: ArrayLength> HidReport<MaxSize> {
         self.id
     }
 
-    /// The data for this report. This will be no more than `MaxSize` bytes, but may be less if the report is smaller than the maximum size.
+    /// The data for this report.
     pub fn data(&self) -> &[u8] {
-        self.data.as_slice().get(..self.valid_bytes).unwrap_or(&[])
+        self.data
     }
 }
 
 /// HID report types supported by the SetReport operation.
-pub enum SetHidReport<OutputMaxSize: ArrayLength, FeatureMaxSize: ArrayLength> {
+pub enum SetHidReport<'buf> {
     /// An output report
-    Output(HidReport<OutputMaxSize>),
+    Output(HidReport<'buf>),
 
     /// A feature report
-    Feature(HidReport<FeatureMaxSize>),
+    Feature(HidReport<'buf>),
 }
 
-impl<OutputMaxSize: ArrayLength, FeatureMaxSize: ArrayLength> SetHidReport<OutputMaxSize, FeatureMaxSize> {
+impl<'buf> SetHidReport<'buf> {
     /// The data for this report, whatever its type.
     pub fn data(&self) -> &[u8] {
         match self {
@@ -100,15 +88,15 @@ pub enum GetHidReportType {
 }
 
 /// HID report types supported by the GetReport operation.
-pub enum GetHidReport<InputMaxSize: ArrayLength, FeatureMaxSize: ArrayLength> {
+pub enum GetHidReport<'buf> {
     /// An input report
-    Input(HidReport<InputMaxSize>),
+    Input(HidReport<'buf>),
 
     /// A feature report
-    Feature(HidReport<FeatureMaxSize>),
+    Feature(HidReport<'buf>),
 }
 
-impl<InputMaxSize: ArrayLength, FeatureMaxSize: ArrayLength> GetHidReport<InputMaxSize, FeatureMaxSize> {
+impl<'buf> GetHidReport<'buf> {
     /// The data for this report, whatever its type.
     pub fn data(&self) -> &[u8] {
         match self {
@@ -165,36 +153,47 @@ pub trait HidDevice {
     //
     fn report_descriptor(&self) -> &HidReportDescriptor;
 
-    /// Respond to an explicit request for a particular report from the host. You must fill `out` with the report data.
-    fn get_report(
+    /// Respond to an explicit request for a particular report from the host.
+    ///
+    /// This invokes `process_report` with the requested [`GetHidReport`].
+    ///
+    /// The value returned by `process_report` must be propagated back to the caller. Returning
+    /// `Err(HidError)` (before `process_report` is invoked) signals that the requested report could
+    /// not be produced.
+    fn process_get_report<R>(
         &mut self,
         report_type: GetHidReportType,
         report_id: ReportId,
-    ) -> impl core::future::Future<
-        Output = Result<GetHidReport<Self::InputReportMaxSize, Self::FeatureReportMaxSize>, HidError>,
-    >;
+        process_report: impl AsyncFnOnce(GetHidReport<'_>) -> R,
+    ) -> impl core::future::Future<Output = Result<R, HidError>>;
 
     /// Respond to a command from the host to handle a particular output/feature report.
     fn set_report(
         &mut self,
-        report: &SetHidReport<Self::OutputReportMaxSize, Self::FeatureReportMaxSize>,
+        report: &SetHidReport<'_>,
     ) -> impl core::future::Future<Output = Result<(), HidError>>;
 
-    /// This is for 'unsolicited' reports - user is responsible for polling this and sending it up.
-    ///
-    /// Blocks until the device is ready to yield an unsolicited report.
+    /// Blocks until the device is ready to yield an unsolicited input report.
+    /// When this returns, the next call to process_next_input_report should be able to run without blocking on I/O.
     fn wait_for_input_report(&mut self) -> impl core::future::Future<Output = ()>;
 
-    /// Blocks until an unsolicited report is available and returns it. If none is available, this will block until one is.
-    ///
-    /// This is for 'unsolicited' reports - user is responsible for polling this and sending it up.
-    fn next_input_report(
-        &mut self,
-    ) -> impl core::future::Future<Output = Result<HidReport<Self::InputReportMaxSize>, HidError>>;
-
-    /// Returns true if there is a pending input report that can be retrieved immediately with next_input_report().
-    /// If this returns true, it implies that wait_for_input_report() and next_input_report() should return immediately.
+    /// Returns true if there is a pending input report that can be retrieved immediately with process_next_input_report().
+    /// If this returns true, it implies that wait_for_input_report() and process_next_input_report() should return immediately.
     fn has_pending_input_report(&mut self) -> bool;
+
+    /// Process the next unsolicited input report to the transport.
+    ///
+    /// This blocks until an unsolicited report is available, then invokes `process_report` with a [`HidReport`].
+    ///
+    /// The value returned by `process_report` must be propagated back to the caller. Returning `Err(HidError)`
+    /// (before `process_report` is invoked) signals an inability to retrieve a message.
+    ///
+    /// This is for 'unsolicited' reports that the device has decided to signal the host to retrieve.
+    ///
+    fn process_next_input_report<R>(
+        &mut self,
+        process_report: impl AsyncFnOnce(HidReport<'_>) -> R,
+    ) -> impl core::future::Future<Output = Result<R, HidError>>;
 
     /// Called when the host commands a particular power state.
     fn set_power_state(

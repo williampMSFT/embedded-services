@@ -436,32 +436,37 @@ impl<
             return Ok(());
         }
 
-        let report = self.hid_device.next_input_report().await?;
-        info!("HID-I2C: Got report to return - listening to bus for read request");
+        let input_id_is_implicit = self.hid_device.report_descriptor().input_id_is_implicit();
+        self.hid_device
+            .process_next_input_report(async |report| {
+                info!("HID-I2C: Got report to return - listening to bus for read request");
 
-        let size_bytes = report.data().len() as u16
-            + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES
-            + if self.hid_device.report_descriptor().input_id_is_implicit() {
-                0
-            } else {
-                device_descriptor::HID_REPORT_ID_SIZE_BYTES
-            };
-        let [size_low, size_high] = size_bytes.to_le_bytes();
+                let size_bytes = report.data().len() as u16
+                    + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES
+                    + if input_id_is_implicit {
+                        0
+                    } else {
+                        device_descriptor::HID_REPORT_ID_SIZE_BYTES
+                    };
+                let [size_low, size_high] = size_bytes.to_le_bytes();
 
-        let header_slice: &[u8] = if self.hid_device.report_descriptor().input_id_is_implicit() {
-            &[size_low, size_high]
-        } else {
-            &[size_low, size_high, report.id().0]
-        };
+                let header_slice: &[u8] = if input_id_is_implicit {
+                    &[size_low, size_high]
+                } else {
+                    &[size_low, size_high, report.id().0]
+                };
 
-        trace!(
-            "Responding with input report {}: {:x} {:x}",
-            report.id(),
-            header_slice,
-            report.data()
-        );
-        self.bus.write_unterminated(header_slice).await?;
-        self.bus.write(report.data()).await?;
+                trace!(
+                    "Responding with input report {}: {:x} {:x}",
+                    report.id(),
+                    header_slice,
+                    report.data()
+                );
+                self.bus.write_unterminated(header_slice).await?;
+                self.bus.write(report.data()).await?;
+                Ok::<(), Error<Bus::Error>>(())
+            })
+            .await??;
 
         if !self.hid_device.has_pending_input_report() {
             self.attn_pin.clear_interrupt();
@@ -505,8 +510,7 @@ impl<
                 self.write_buf
                     .get(..length)
                     .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
-            )
-            .map_err(|_| Error::Protocol(ProtocolError::InvalidSize))?,
+            ),
         );
 
         self.hid_device.set_report(&output_report).await?;
@@ -555,13 +559,17 @@ impl<
                 trace!("Processing get report command");
 
                 let (report_type, report_id) = self.get_command_report_header(command_byte).await?;
-                let report = self.hid_device.get_report(report_type.try_into()?, report_id).await?;
-
-                // Note: per HID spec, the length field needs to include its own length (2 bytes)
-                let len_header =
-                    (report.data().len() as u16 + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES).to_le_bytes();
-                self.bus.write(&len_header).await?;
-                self.bus.write(report.data()).await?;
+                self.hid_device
+                    .process_get_report(report_type.try_into()?, report_id, async |report| {
+                        // Note: per HID spec, the length field needs to include its own length (2 bytes)
+                        let len_header = (report.data().len() as u16
+                            + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES)
+                            .to_le_bytes();
+                        self.bus.write(&len_header).await?;
+                        self.bus.write(report.data()).await?;
+                        Ok::<(), Error<Bus::Error>>(())
+                    })
+                    .await??;
 
                 Ok(())
             }
@@ -593,13 +601,13 @@ impl<
                         self.write_buf
                             .get(..report_size)
                             .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
-                    )?),
+                    )),
                     HidI2cReportType::Feature => SetHidReport::Feature(HidReport::new(
                         report_id,
                         self.write_buf
                             .get(..report_size)
                             .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
-                    )?),
+                    )),
                 };
 
                 self.hid_device.set_report(&set_report).await?;

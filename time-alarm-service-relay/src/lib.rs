@@ -1,6 +1,6 @@
 #![no_std]
 
-pub mod hid;
+// pub mod hid;
 // TODO move MCTP stuff into a separate submodule - punt on this until pending MCTP changes go in to avoid merge conflicts though
 
 use time_alarm_service_interface::TimeAlarmService;
