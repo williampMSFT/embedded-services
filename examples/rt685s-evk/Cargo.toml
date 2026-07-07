@@ -55,6 +55,7 @@ hidi2c-target-service = { path = "../../hidi2c-target-service", features = [
     "defmt",
 ] }
 
+num_enum = { version = "0.7.5", default-features = false }
 odp-service-common = { path = "../../odp-service-common" }
 power-button-service = { path = "../../power-button-service", features = [
     "defmt",

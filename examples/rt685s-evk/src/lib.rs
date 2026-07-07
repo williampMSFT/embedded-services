@@ -1,5 +1,7 @@
 #![no_std]
 
+pub mod mocks;
+
 use mimxrt600_fcb::FlexSPIFlashConfigurationBlock;
 use {defmt_rtt as _, panic_probe as _};
 

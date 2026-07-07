@@ -1245,6 +1245,7 @@ dependencies = [
  "generic-array",
  "hidi2c-target-service",
  "mimxrt600-fcb 0.1.0",
+ "num_enum",
  "odp-service-common",
  "panic-probe",
  "platform-service",

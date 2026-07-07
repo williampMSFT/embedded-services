@@ -14,7 +14,7 @@ pub struct TimeAlarmHidRelay<
 > {
     _service: T,
     channel: embassy_sync::channel::Channel<M, Result<HidReport<MaxReportSize>, HidError>, MAX_PENDING_MESSAGES>, // TODO figure out the right size for this buffer
-    report_descriptor: HidReportDescriptor,
+    report_descriptor: HidReportDescriptor<'static>,
 }
 
 impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blocking_mutex::raw::RawMutex>
@@ -43,7 +43,7 @@ impl<T: time_alarm_service_interface::TimeAlarmService, M: embassy_sync::blockin
     type FeatureReportMaxSize = MaxReportSize;
     const MAX_REPORT_COUNT: u8 = 10; // TODO figure out how many reports we actually need to support and set this accordingly
 
-    fn report_descriptor(&self) -> &HidReportDescriptor {
+    fn report_descriptor(&self) -> &HidReportDescriptor<'_> {
         &self.report_descriptor
     }
 

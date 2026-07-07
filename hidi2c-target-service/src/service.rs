@@ -436,21 +436,21 @@ impl<
             return Ok(());
         }
 
-        let input_id_is_implicit = self.hid_device.report_descriptor().input_id_is_implicit();
+        let report_ids_implicit = self.hid_device.report_descriptor().report_ids_implicit();
         self.hid_device
             .process_next_input_report(async |report| {
                 info!("HID-I2C: Got report to return - listening to bus for read request");
 
                 let size_bytes = report.data().len() as u16
                     + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES
-                    + if input_id_is_implicit {
+                    + if report_ids_implicit {
                         0
                     } else {
                         device_descriptor::HID_REPORT_ID_SIZE_BYTES
                     };
                 let [size_low, size_high] = size_bytes.to_le_bytes();
 
-                let header_slice: &[u8] = if input_id_is_implicit {
+                let header_slice: &[u8] = if report_ids_implicit {
                     &[size_low, size_high]
                 } else {
                     &[size_low, size_high, report.id().0]
@@ -480,7 +480,7 @@ impl<
             + device_descriptor::HID_REPORT_ID_SIZE_BYTES) as usize];
 
         // NOTE - if we're using implicit report IDs, we present that to HidDevice implementations as report ID 0.
-        let header_len = if self.hid_device.report_descriptor().output_id_is_implicit() {
+        let header_len = if self.hid_device.report_descriptor().report_ids_implicit() {
             write_header_buf.len() - (device_descriptor::HID_REPORT_ID_SIZE_BYTES as usize)
         } else {
             write_header_buf.len()
@@ -503,15 +503,12 @@ impl<
             return Err(Error::Protocol(ProtocolError::InvalidSize));
         }
 
-        // TODO this makes a copy, which feels bad - figure out if we can make this write directly into the HID report and still be typesafe . maybe some sort of builder type but need to check in compilerexplorer if something like that actually omits the copy
-        let output_report = embedded_services::relay::hid::SetHidReport::Output(
-            HidReport::new(
-                embedded_services::relay::hid::ReportId(report_id),
-                self.write_buf
-                    .get(..length)
-                    .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
-            ),
-        );
+        let output_report = embedded_services::relay::hid::SetHidReport::Output(HidReport::new(
+            embedded_services::relay::hid::ReportId(report_id),
+            self.write_buf
+                .get(..length)
+                .ok_or(Error::Protocol(ProtocolError::InvalidSize))?,
+        ));
 
         self.hid_device.set_report(&output_report).await?;
 
@@ -562,8 +559,7 @@ impl<
                 self.hid_device
                     .process_get_report(report_type.try_into()?, report_id, async |report| {
                         // Note: per HID spec, the length field needs to include its own length (2 bytes)
-                        let len_header = (report.data().len() as u16
-                            + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES)
+                        let len_header = (report.data().len() as u16 + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES)
                             .to_le_bytes();
                         self.bus.write(&len_header).await?;
                         self.bus.write(report.data()).await?;
@@ -650,8 +646,8 @@ impl<
         hid_device: HidDevice,
         hwinfo: HardwareVersionInfo,
         timeout_settings: TimeoutSettings,
-    ) -> Result<(Self, Runner<'hw, Bus, AttnPin, HidDevice>), core::convert::Infallible> {
-        let device_descriptor = DeviceDescriptor::new(&hid_device, hwinfo);
+    ) -> Result<(Self, Runner<'hw, Bus, AttnPin, HidDevice>), crate::DeviceDescriptorError> {
+        let device_descriptor = DeviceDescriptor::new(&hid_device, hwinfo)?;
 
         let resources = storage.inner.insert(InnerResources {
             reset_signal: embassy_sync::signal::Signal::new(),
