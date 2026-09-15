@@ -620,12 +620,27 @@ impl<
                     }
                 }
 
+                let report_ids_implicit = hid_device.report_descriptor().report_ids_implicit();
+
                 hid_device
                     .process_get_report(report_type.try_into()?, report_id, async |report| {
                         // Note: per HID spec, the length field needs to include its own length (2 bytes)
-                        let len_header = (report.data().len() as u16 + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES)
-                            .to_le_bytes();
-                        bus.write_unterminated(&len_header).await?;
+                        let size_bytes = report.data().len() as u16
+                            + device_descriptor::HID_REPORT_HEADER_SIZE_BYTES
+                            + if report_ids_implicit {
+                                0
+                            } else {
+                                device_descriptor::HID_REPORT_ID_SIZE_BYTES
+                            };
+                        let [size_low, size_high] = size_bytes.to_le_bytes();
+
+                        let header_slice: &[u8] = if report_ids_implicit {
+                            &[size_low, size_high]
+                        } else {
+                            &[size_low, size_high, report_id.0]
+                        };
+
+                        bus.write_unterminated(header_slice).await?;
                         bus.write(report.data()).await?;
                         Ok::<(), Error<Bus::Error>>(())
                     })
@@ -643,17 +658,26 @@ impl<
                     .ok_or(Error::Protocol(ProtocolError::InvalidSize))?;
 
                 // Note: per HID spec, the length field relayed over the wire needs to include its own length (2 bytes)
-                let report_size = (u16::from_le_bytes(len_header)
-                    .checked_sub(device_descriptor::HID_REPORT_HEADER_SIZE_BYTES))
+                let report_size = (u16::from_le_bytes(len_header).checked_sub(
+                    device_descriptor::HID_REPORT_HEADER_SIZE_BYTES
+                        + if hid_device.report_descriptor().report_ids_implicit() {
+                            0
+                        } else {
+                            device_descriptor::HID_REPORT_ID_SIZE_BYTES
+                        },
+                ))
                 .ok_or(Error::Protocol(ProtocolError::InvalidSize))? as usize;
 
-                let data_start_index = if hid_device.report_descriptor().report_ids_implicit() {
-                    0
+                let (_repeated_report_id, data) = if hid_device.report_descriptor().report_ids_implicit() {
+                    (0u8, data)
                 } else {
-                    1
+                    let (&repeated_report_id, data) =
+                        data.split_first().ok_or(Error::Protocol(ProtocolError::InvalidSize))?;
+                    (repeated_report_id, data)
                 };
+
                 let report_data = data
-                    .get(data_start_index..data_start_index + report_size)
+                    .get(..report_size)
                     .ok_or(Error::Protocol(ProtocolError::InvalidSize))?;
 
                 let set_report = match report_type {
