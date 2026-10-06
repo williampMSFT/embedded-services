@@ -1,0 +1,23 @@
+[[usagePage]]
+id = 0xFFBA
+name = "Vendor CTF Device"
+
+    [[usagePage.usage]]
+    id = 0xD0
+    name = "CTF Management Interface"
+    types = ['CA']
+
+    [[usagePage.usage]]
+    id = 0x01
+    name = "Flag Report"
+    types = ['DV']
+
+
+[[applicationCollection]]
+usage = ['Vendor CTF Device', 'CTF Management Interface']
+
+    [[applicationCollection.outputReport]]
+        [[applicationCollection.outputReport.variableItem]]
+        usage = ['Vendor CTF Device', 'Flag Report']
+        logicalValueRange = [0, 2147483647]
+
