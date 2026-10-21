@@ -2,6 +2,8 @@
 
 mod serialization;
 
+pub mod hid;
+
 pub use serialization::{ThermalError, ThermalRequest, ThermalResponse, ThermalResult};
 use thermal_service_interface::ThermalService;
 use thermal_service_interface::fan::{self, FanService};

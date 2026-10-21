@@ -10,7 +10,11 @@ defmt = { workspace = true, optional = true }
 embedded-services.workspace = true
 thermal-service-interface.workspace = true
 num_enum.workspace = true
+typenum.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+embassy-time = { workspace = true, features = ["std", "generic-queue-8"] }
 
 [lints]
 workspace = true

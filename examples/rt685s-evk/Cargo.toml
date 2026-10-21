@@ -64,6 +64,13 @@ time-alarm-service-interface = { path = "../../time-alarm-service-interface", fe
 time-alarm-service-relay = { path = "../../time-alarm-service-relay", features = [
     "defmt",
 ] }
+thermal-service = { path = "../../thermal-service", features = ["defmt", "mock"] }
+thermal-service-interface = { path = "../../thermal-service-interface", features = [
+    "defmt",
+] }
+thermal-service-relay = { path = "../../thermal-service-relay", features = [
+    "defmt",
+] }
 typenum = "1.20"
 
 static_cell = "2.1.0"

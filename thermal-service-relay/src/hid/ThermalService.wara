@@ -1,0 +1,54 @@
+# TODO there might be existing pages for this stuff; if there isn't, we need to standarize this at some point
+
+[[usagePage]]
+id = 0xFFED
+name = "Vendor Thermal Device"
+
+    [[usagePage.usage]]
+    id = 0x1
+    name = "Thermal Management Device"
+    types = ['CA']
+
+    [[usagePage.usage]]
+    id = 0x20
+    name = "Fan Speed"
+    types = ['DV']
+
+    [[usagePage.usage]]
+    id = 0x21
+    name = "Sensor Temperature"
+    types = ['DV']
+
+
+[[applicationCollection]]
+usage = ['Vendor Thermal Device', 'Thermal Management Device']
+
+
+    # TODO - unclear how to do multiple fans/sensors - array, perhaps? How expensive is it to fill out the whole report if we do that?
+    # TODO - unclear what other properties the fan needs - anything other than RPM need to be controllable? I think Cho mentioned something about sonnes or something?
+    # TODO - figure out if we need other device classes
+    # TODO - figure out if we need to put units on these things
+
+    [[applicationCollection.outputReport]]
+        # Sets the fan speed
+        # Null values (e.g. 0) clears the fan configuration.
+
+        [[applicationCollection.outputReport.variableItem]]
+        usage = ['Vendor Thermal Device', 'Fan Speed']
+        # HID Logical Maximum is sign-extended, so int32 max is the largest unambiguous value.
+        logicalValueRange = [0, 2147483646]
+        reportFlags = ['nullstate']
+
+    [[applicationCollection.inputReport]]
+
+        [[applicationCollection.inputReport.variableItem]]
+        usage = ['Vendor Thermal Device', 'Fan Speed']
+        logicalValueRange = [0, 2147483646]
+        reportFlags = ['nullstate']
+
+    [[applicationCollection.inputReport]]
+
+        [[applicationCollection.inputReport.variableItem]]
+        usage = ['Vendor Thermal Device', 'Sensor Temperature']
+        logicalValueRange = [0, 2147483646]
+        reportFlags = ['nullstate']

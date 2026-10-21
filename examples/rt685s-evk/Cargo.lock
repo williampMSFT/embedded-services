@@ -476,6 +476,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f1c75747a43b086df1a87fb2a889590bc0725e0abf54bba6d0c4bf7bd9e762c"
 
 [[package]]
+name = "embedded-fans"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e5007eb97aabfe3606c0b02823b3120e861c748ed3560756aa4fd231ef9ebf0"
+dependencies = [
+ "defmt 1.1.0",
+]
+
+[[package]]
+name = "embedded-fans-async"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bafd19dc3b6aaa5027856818e19ccbfe84ebfb094c8a0ecf84a20e75c3b8e959"
+dependencies = [
+ "defmt 1.1.0",
+ "embedded-fans",
+]
+
+[[package]]
 name = "embedded-hal"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -555,6 +574,27 @@ dependencies = [
  "embedded-hal-async",
  "num_enum",
  "smbus-pec",
+]
+
+[[package]]
+name = "embedded-sensors-hal"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c703756bee31e7aaf55d8fb6dcf7337cfc231cfb4a3ad34b9df509846fd9001"
+dependencies = [
+ "defmt 1.1.0",
+ "paste",
+]
+
+[[package]]
+name = "embedded-sensors-hal-async"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51c524a78b2804eca0d9ec05154e51d9af948b40cd0a6bbcc4d5832ff7e47b5b"
+dependencies = [
+ "defmt 1.1.0",
+ "embedded-sensors-hal",
+ "paste",
 ]
 
 [[package]]
@@ -1050,6 +1090,9 @@ dependencies = [
  "platform-service",
  "power-button-service",
  "static_cell",
+ "thermal-service",
+ "thermal-service-interface",
+ "thermal-service-relay",
  "time-alarm-service",
  "time-alarm-service-interface",
  "time-alarm-service-relay",
@@ -1209,6 +1252,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "thermal-service"
+version = "0.1.0"
+dependencies = [
+ "defmt 0.3.100",
+ "embassy-futures",
+ "embassy-sync",
+ "embassy-time",
+ "embedded-fans-async",
+ "embedded-sensors-hal-async",
+ "embedded-services",
+ "heapless",
+ "odp-service-common",
+ "thermal-service-interface",
+]
+
+[[package]]
+name = "thermal-service-interface"
+version = "0.1.0"
+dependencies = [
+ "defmt 0.3.100",
+ "embassy-time",
+ "embedded-fans-async",
+ "embedded-sensors-hal-async",
+]
+
+[[package]]
+name = "thermal-service-relay"
+version = "0.1.0"
+dependencies = [
+ "defmt 0.3.100",
+ "embedded-services",
+ "num_enum",
+ "thermal-service-interface",
+ "typenum",
+ "uuid",
+]
+
+[[package]]
 name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1348,6 +1429,12 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "uuid"
+version = "1.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3cf4199d1e5d15ddd86a694e4d0dffa9c323ce759fea589f00fef9d81cc1931d"
 
 [[package]]
 name = "valuable"
